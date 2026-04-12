@@ -228,10 +228,27 @@ def main():
     # =================================================================
     print_header(f"5. HIERARCHICAL CLUSTERING (k={best_k})")
 
-    with Timer("Hierarchical fit"):
+    with Timer("Hierarchical fit (sampled + assign)"):
+        # Ward linkage needs O(n^2) memory for pairwise distances.
+        # Subsample to fit, then assign full dataset via nearest centroid.
+        hier_sample_size = min(15000, len(X))
+        hier_rng = np.random.RandomState(RANDOM_STATE)
+        hier_idx = hier_rng.choice(len(X), hier_sample_size, replace=False)
+        X_hier_sample = X[hier_idx]
+
         hier = AgglomerativeClustering(n_clusters=best_k, linkage="ward")
-        hier_labels = hier.fit_predict(X)
+        sample_labels = hier.fit_predict(X_hier_sample)
+
+        # Compute centroids from sample, assign all rows to nearest centroid
+        from scipy.spatial.distance import cdist
+        centroids = np.array([
+            X_hier_sample[sample_labels == c].mean(axis=0)
+            for c in range(best_k)
+        ])
+        hier_labels = cdist(X, centroids, metric="euclidean").argmin(axis=1)
+
         sizes_h = dict(zip(*np.unique(hier_labels, return_counts=True)))
+        print(f"    Sample: {hier_sample_size:,} pts -> assign all {len(X):,}")
         print(f"    Cluster sizes: {sizes_h}")
 
     # =================================================================
