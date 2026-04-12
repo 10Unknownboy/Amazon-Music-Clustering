@@ -1,34 +1,40 @@
 # =============================================================================
-# main.py -- Amazon Music Clustering Pipeline Orchestrator
+# main.py -- Amazon Music Clustering Pipeline (Lightweight Local Runner)
 # =============================================================================
-# End-to-end pipeline that runs all phases of the clustering project:
-#   1. Data loading & exploration
-#   2. Preprocessing & cleaning
-#   3. Feature selection & correlation analysis
-#   4. K-Means clustering (with optimal k search)
-#   5. DBSCAN clustering
-#   6. Hierarchical clustering
-#   7. Evaluation & interpretation
-#   8. Visualization (all plots)
-#   9. Export results to CSV
+# This script performs ZERO heavy ML computation. It loads pre-computed
+# results from cloud_compute.py and:
+#   1. Loads raw data (for metadata)
+#   2. Preprocesses features (fast: just scaling)
+#   3. Loads cloud-computed cluster labels, metrics, and embeddings
+#   4. Generates ALL 14 visualization plots
+#   5. Exports the final CSV with cluster labels
+#
+# PREREQUISITES:
+#   Run cloud_compute.py on a cloud server first, then copy:
+#     data/processed/cloud_results.npz
+#     data/processed/cloud_metrics.json
+#   to this project before running main.py.
+#
+# EXPECTED RUNTIME: < 30 seconds on any machine.
 # =============================================================================
 
 import sys
 import os
 import time
+import json
 import warnings
 import numpy as np
 import pandas as pd
 
-# Set matplotlib backend BEFORE any other matplotlib imports
+# Set matplotlib backend BEFORE any pyplot imports
 import matplotlib
 matplotlib.use("Agg")
 
-# Suppress convergence warnings for cleaner output
+# Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# Ensure project root is on the path for imports
+# Ensure project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.utils import (
@@ -36,10 +42,13 @@ from src.utils import (
     print_subheader,
     CLUSTERED_OUTPUT_PATH,
     CLUSTERING_FEATURES,
+    REFERENCE_COLUMNS,
+    DROP_COLUMNS,
+    PROCESSED_DATA_DIR,
+    RAW_DATASET_PATH,
 )
 from src.data_preprocessing import (
     load_dataset,
-    explore_dataset,
     clean_dataset,
     drop_non_clustering_columns,
     scale_features,
@@ -49,13 +58,7 @@ from src.feature_selection import (
     compute_correlation_matrix,
     get_feature_summary,
 )
-from src.clustering import (
-    run_kmeans,
-    run_dbscan,
-    run_hierarchical,
-)
 from src.evaluation import (
-    evaluate_all,
     profile_clusters,
     interpret_clusters,
 )
@@ -65,161 +68,160 @@ from src.visualization import (
     plot_boxplots,
     plot_elbow_curve,
     plot_silhouette_scores,
-    plot_silhouette_diagram,
+    plot_silhouette_diagram_precomputed,
     plot_pca_clusters,
-    plot_tsne_clusters,
+    plot_tsne_precomputed,
     plot_cluster_heatmap,
     plot_cluster_radar,
     plot_cluster_bar_comparison,
     plot_feature_distributions_by_cluster,
     plot_cluster_sizes,
-    plot_dendrogram,
+    plot_dendrogram_precomputed,
 )
+
+# Paths for cloud-computed results
+CLOUD_RESULTS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_results.npz")
+CLOUD_METRICS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_metrics.json")
+
+
+def load_cloud_results():
+    """
+    Load pre-computed results from cloud_compute.py.
+
+    Returns
+    -------
+    tuple of (dict, dict)
+        - arrays: dict of numpy arrays (labels, embeddings, etc.)
+        - metrics: dict of evaluation metrics and k-search data
+    """
+    if not os.path.exists(CLOUD_RESULTS_PATH):
+        raise FileNotFoundError(
+            f"Cloud results not found at: {CLOUD_RESULTS_PATH}\n"
+            f"Run 'python cloud_compute.py' on a cloud server first, "
+            f"then copy the output files here."
+        )
+
+    arrays = dict(np.load(CLOUD_RESULTS_PATH, allow_pickle=True))
+    with open(CLOUD_METRICS_PATH, "r") as f:
+        metrics = json.load(f)
+
+    print(f"[INFO] Loaded cloud results from: {CLOUD_RESULTS_PATH}")
+    print(f"       Arrays: {list(arrays.keys())}")
+    print(f"       Metrics: {list(metrics.keys())}")
+    return arrays, metrics
 
 
 def main():
-    """Run the full Amazon Music Clustering pipeline."""
+    """Run the lightweight local pipeline."""
     pipeline_start = time.time()
 
     # =================================================================
-    # PHASE 1: Data Loading & Exploration
+    # PHASE 1: Load raw data
     # =================================================================
-    print_header("PHASE 1: DATA LOADING & EXPLORATION")
+    print_header("PHASE 1: DATA LOADING")
 
     df = load_dataset()
-    explore_dataset(df)
 
     # =================================================================
-    # PHASE 2: Preprocessing & Cleaning
+    # PHASE 2: Preprocessing (fast -- just cleaning & scaling)
     # =================================================================
-    print_header("PHASE 2: PREPROCESSING & CLEANING")
+    print_header("PHASE 2: PREPROCESSING")
 
     df = clean_dataset(df)
     metadata, features_df = drop_non_clustering_columns(df)
-
-    # =================================================================
-    # PHASE 3: Feature Selection & Correlation Analysis
-    # =================================================================
-    print_header("PHASE 3: FEATURE SELECTION & CORRELATION ANALYSIS")
-
     selected_features = select_clustering_features(features_df)
+
     feature_summary = get_feature_summary(selected_features)
     print_subheader("Feature Summary")
     print(feature_summary.to_string())
 
     corr_matrix = compute_correlation_matrix(selected_features)
-
-    # Scale features for clustering
     scaled_features, scaler = scale_features(selected_features, method="standard")
     X = scaled_features.values
 
     # =================================================================
-    # PHASE 3.5: EDA Visualizations
+    # PHASE 3: Load cloud-computed results
     # =================================================================
-    print_header("GENERATING EDA VISUALIZATIONS")
+    print_header("PHASE 3: LOADING CLOUD-COMPUTED RESULTS")
 
-    plot_feature_distributions_eda(selected_features, CLUSTERING_FEATURES)
-    plot_correlation_heatmap(corr_matrix)
-    plot_boxplots(selected_features, CLUSTERING_FEATURES)
+    cloud_arrays, cloud_metrics = load_cloud_results()
 
-    # =================================================================
-    # PHASE 4A: K-Means Clustering
-    # =================================================================
-    print_header("PHASE 4A: K-MEANS CLUSTERING")
+    kmeans_labels = cloud_arrays["kmeans_labels"]
+    dbscan_labels = cloud_arrays["dbscan_labels"]
+    hier_labels = cloud_arrays["hier_labels"]
+    tsne_coords = cloud_arrays["tsne_coords"]
+    tsne_labels = cloud_arrays["tsne_labels"]
+    sil_values = cloud_arrays["sil_values"]
+    sil_labels = cloud_arrays["sil_labels"]
 
-    # Pre-computed optimal-k results (from cloud server run)
-    # Searching k=2..7 on 95,837 samples is computationally expensive,
-    # so we use the pre-computed inertia and silhouette scores directly.
-    k_results = {
-        "k_range":            [2,         3,         4,         5,         6,         7],
-        "inertias":           [778813.6,  658335.1,  593031.0,  548594.9,  520710.6,  486936.4],
-        "silhouette_scores":  [0.2032,    0.2423,    0.2310,    0.1864,    0.1593,    0.1880],
-    }
-    # Best k = 3 (highest silhouette score: 0.2423)
-    optimal_k = 3
+    k_search = cloud_metrics["k_search"]
+    km_metrics = cloud_metrics["kmeans"]
+    db_metrics = cloud_metrics["dbscan"]
+    h_metrics = cloud_metrics["hierarchical"]
+    optimal_k = k_search["best_k"]
 
-    print_subheader("Optimal K Results (pre-computed)")
-    for k, sse, sil in zip(k_results["k_range"],
-                           k_results["inertias"],
-                           k_results["silhouette_scores"]):
-        marker = " <-- best" if k == optimal_k else ""
-        print(f"  k={k:2d}  |  Inertia: {sse:>12,.1f}  |  "
-              f"Silhouette: {sil:.4f}{marker}")
+    # Print pre-computed metrics
+    print_subheader("Pre-computed Evaluation Metrics")
+    print(f"\n  K-Means (k={optimal_k}):")
+    print(f"    Silhouette     : {km_metrics['silhouette_score']:.4f}")
+    print(f"    Davies-Bouldin : {km_metrics['davies_bouldin_index']:.4f}")
+    print(f"    Inertia        : {km_metrics['inertia']:,.1f}")
 
-    # Plot elbow and silhouette curves
-    plot_elbow_curve(k_results["k_range"], k_results["inertias"], optimal_k)
-    plot_silhouette_scores(
-        k_results["k_range"], k_results["silhouette_scores"], optimal_k
-    )
+    print(f"\n  DBSCAN:")
+    print(f"    Clusters       : {db_metrics['n_clusters']}")
+    print(f"    Noise points   : {db_metrics['n_noise']:,}")
+    print(f"    Silhouette     : {db_metrics['silhouette_score']:.4f}")
+    print(f"    Davies-Bouldin : {db_metrics['davies_bouldin_index']:.4f}")
 
-    # Run K-Means with optimal k
-    kmeans_labels, kmeans_model = run_kmeans(X, optimal_k)
+    print(f"\n  Hierarchical (k={optimal_k}):")
+    print(f"    Silhouette     : {h_metrics['silhouette_score']:.4f}")
+    print(f"    Davies-Bouldin : {h_metrics['davies_bouldin_index']:.4f}")
 
-    # =================================================================
-    # PHASE 4B: DBSCAN Clustering
-    # =================================================================
-    print_header("PHASE 4B: DBSCAN CLUSTERING")
-
-    dbscan_labels, dbscan_model = run_dbscan(X)
-
-    # =================================================================
-    # PHASE 4C: Hierarchical Clustering
-    # =================================================================
-    print_header("PHASE 4C: HIERARCHICAL CLUSTERING")
-
-    hierarchical_labels, hierarchical_model = run_hierarchical(
-        X, n_clusters=optimal_k
-    )
-
-    # =================================================================
-    # PHASE 5: Evaluation & Interpretation (K-Means as primary)
-    # =================================================================
-    print_header("PHASE 5: CLUSTER EVALUATION & INTERPRETATION")
-
-    # Evaluate all three algorithms
-    print_subheader("K-Means Evaluation")
-    kmeans_metrics = evaluate_all(X, kmeans_labels, kmeans_model)
-
-    print_subheader("DBSCAN Evaluation")
-    dbscan_metrics = evaluate_all(X, dbscan_labels)
-
-    print_subheader("Hierarchical Evaluation")
-    hierarchical_metrics = evaluate_all(X, hierarchical_labels)
-
-    # Comparison table
-    print_header("ALGORITHM COMPARISON")
+    # Algorithm comparison table
+    print_subheader("Algorithm Comparison")
     comparison = pd.DataFrame({
-        "K-Means": kmeans_metrics,
-        "DBSCAN": dbscan_metrics,
-        "Hierarchical": hierarchical_metrics,
+        "K-Means": km_metrics,
+        "DBSCAN": db_metrics,
+        "Hierarchical": h_metrics,
     }).T
     print(comparison.to_string())
 
-    # Profile K-Means clusters (primary algorithm)
+    # Cluster profiles & interpretation
     cluster_profiles = profile_clusters(
         selected_features, kmeans_labels, CLUSTERING_FEATURES
     )
     interpretations = interpret_clusters(cluster_profiles)
 
     # =================================================================
-    # PHASE 6: Visualization
+    # PHASE 4: Generate ALL visualizations (rendering only -- fast)
     # =================================================================
-    print_header("PHASE 6: GENERATING CLUSTER VISUALIZATIONS")
+    print_header("PHASE 4: GENERATING VISUALIZATIONS")
 
-    # Silhouette diagram for K-Means
-    plot_silhouette_diagram(X, kmeans_labels)
+    # --- EDA plots ---
+    plot_feature_distributions_eda(selected_features, CLUSTERING_FEATURES)
+    plot_correlation_heatmap(corr_matrix)
+    plot_boxplots(selected_features, CLUSTERING_FEATURES)
 
-    # PCA scatter plots for all algorithms
+    # --- Elbow & silhouette score plots (from pre-computed data) ---
+    plot_elbow_curve(
+        k_search["k_range"], k_search["inertias"], optimal_k
+    )
+    plot_silhouette_scores(
+        k_search["k_range"], k_search["silhouette_scores"], optimal_k
+    )
+
+    # --- Silhouette diagram (from pre-computed per-sample values) ---
+    plot_silhouette_diagram_precomputed(sil_values, sil_labels, optimal_k)
+
+    # --- PCA scatter plots (PCA is fast, computed here) ---
     plot_pca_clusters(X, kmeans_labels, "K-Means")
     plot_pca_clusters(X, dbscan_labels, "DBSCAN")
-    plot_pca_clusters(X, hierarchical_labels, "Hierarchical")
+    plot_pca_clusters(X, hier_labels, "Hierarchical")
 
-    # t-SNE scatter plot (K-Means only -- sampled for speed)
-    t0 = time.time()
-    plot_tsne_clusters(X, kmeans_labels, "K-Means")
-    print(f"  [TIME] t-SNE: {time.time() - t0:.1f}s")
+    # --- t-SNE scatter (from pre-computed embedding) ---
+    plot_tsne_precomputed(tsne_coords, tsne_labels, "K-Means")
 
-    # Cluster profile visualizations
+    # --- Cluster profile plots ---
     plot_cluster_heatmap(cluster_profiles)
     plot_cluster_radar(cluster_profiles)
     plot_cluster_bar_comparison(cluster_profiles)
@@ -228,41 +230,39 @@ def main():
     )
     plot_cluster_sizes(kmeans_labels)
 
-    # Dendrogram
-    plot_dendrogram(X)
+    # --- Dendrogram (small sample, computed here -- fast) ---
+    plot_dendrogram_precomputed(X)
 
     # =================================================================
-    # PHASE 7: Final Analysis & Export
+    # PHASE 5: Final analysis & export
     # =================================================================
-    print_header("PHASE 7: FINAL ANALYSIS & EXPORT")
+    print_header("PHASE 5: FINAL ANALYSIS & EXPORT")
 
-    # Build final DataFrame with cluster labels
+    # Build final DataFrame
     final_df = metadata.copy()
     for col in CLUSTERING_FEATURES:
         final_df[col] = selected_features[col].values
 
     final_df["cluster_kmeans"] = kmeans_labels
     final_df["cluster_dbscan"] = dbscan_labels
-    final_df["cluster_hierarchical"] = hierarchical_labels
-
-    # Add cluster interpretation labels
+    final_df["cluster_hierarchical"] = hier_labels
     final_df["cluster_label"] = final_df["cluster_kmeans"].map(interpretations)
 
-    # Show top tracks per cluster
+    # Show sample tracks per cluster
     print_subheader("Sample Tracks per Cluster (K-Means)")
-    for cluster_id in sorted(set(kmeans_labels)):
-        cluster_tracks = final_df[final_df["cluster_kmeans"] == cluster_id]
-        label = interpretations.get(cluster_id, "Unknown")
-        print(f"\n  Cluster {cluster_id} -- \"{label}\" ({len(cluster_tracks):,} tracks)")
-        sample = cluster_tracks[["name_song", "name_artists", "genres"]].head(5)
+    for cid in sorted(set(kmeans_labels)):
+        tracks = final_df[final_df["cluster_kmeans"] == cid]
+        label = interpretations.get(cid, "Unknown")
+        print(f"\n  Cluster {cid} -- \"{label}\" ({len(tracks):,} tracks)")
+        sample = tracks[["name_song", "name_artists", "genres"]].head(5)
         for _, row in sample.iterrows():
-            print(f"    *  {row['name_song']} -- {row['name_artists']} [{row['genres']}]")
+            print(f"    *  {row['name_song']} -- {row['name_artists']} "
+                  f"[{row['genres']}]")
 
-    # Export to CSV
+    # Export CSV
     final_df.to_csv(CLUSTERED_OUTPUT_PATH, index=False)
     print(f"\n[INFO] Final dataset exported to: {CLUSTERED_OUTPUT_PATH}")
     print(f"       Total rows: {len(final_df):,}")
-    print(f"       Columns: {list(final_df.columns)}")
 
     # =================================================================
     # Summary
@@ -272,11 +272,11 @@ def main():
     print(f"  Dataset          : {len(final_df):,} songs")
     print(f"  Features used    : {len(CLUSTERING_FEATURES)}")
     print(f"  Optimal K        : {optimal_k}")
-    print(f"  Silhouette (KM)  : {kmeans_metrics['silhouette_score']:.4f}")
-    print(f"  Davies-Bouldin   : {kmeans_metrics['davies_bouldin_index']:.4f}")
+    print(f"  Silhouette (KM)  : {km_metrics['silhouette_score']:.4f}")
+    print(f"  Davies-Bouldin   : {km_metrics['davies_bouldin_index']:.4f}")
     print(f"  Output CSV       : {CLUSTERED_OUTPUT_PATH}")
     print(f"  Plots saved to   : outputs/plots/")
-    print(f"  Total time       : {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+    print(f"  Total time       : {elapsed:.1f}s")
     print()
 
     return final_df

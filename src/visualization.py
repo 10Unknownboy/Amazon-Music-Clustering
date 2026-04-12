@@ -636,3 +636,122 @@ def plot_dendrogram(X, method="ward", max_display=30, sample_size=1500):
                  fontsize=14, fontweight="bold")
     fig.tight_layout()
     _save_plot(fig, "14_dendrogram.png")
+
+
+# =============================================================================
+# Pre-computed variants (for use with cloud_compute.py results)
+# =============================================================================
+def plot_silhouette_diagram_precomputed(sil_values, sil_labels, n_clusters):
+    """
+    Plot silhouette diagram from PRE-COMPUTED per-sample silhouette values.
+
+    Parameters
+    ----------
+    sil_values : np.ndarray
+        Pre-computed silhouette coefficient for each sample.
+    sil_labels : np.ndarray
+        Cluster labels corresponding to sil_values.
+    n_clusters : int
+        Number of clusters.
+    """
+    print_subheader("Silhouette Diagram (pre-computed)")
+
+    avg_score = float(np.mean(sil_values))
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_STANDARD)
+
+    y_lower = 10
+    for i in range(n_clusters):
+        cluster_values = sil_values[sil_labels == i]
+        cluster_values.sort()
+        size = cluster_values.shape[0]
+        y_upper = y_lower + size
+
+        color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
+        ax.fill_betweenx(np.arange(y_lower, y_upper), 0, cluster_values,
+                         facecolor=color, edgecolor=color, alpha=0.75)
+        ax.text(-0.03, y_lower + 0.5 * size, str(i),
+                fontsize=10, fontweight="bold")
+        y_lower = y_upper + 10
+
+    ax.axvline(x=avg_score, color="#FF6B6B", linestyle="--", linewidth=2,
+               label=f"Avg Score: {avg_score:.3f}")
+    ax.set_xlabel("Silhouette Coefficient", fontsize=12)
+    ax.set_ylabel("Cluster", fontsize=12)
+    ax.set_title("Silhouette Diagram -- Per-Sample Analysis",
+                 fontsize=14, fontweight="bold")
+    ax.legend(fontsize=11)
+    fig.tight_layout()
+    _save_plot(fig, "06_silhouette_diagram.png")
+
+
+def plot_tsne_precomputed(tsne_coords, labels, title_suffix="K-Means"):
+    """
+    Plot t-SNE scatter from PRE-COMPUTED 2D coordinates.
+
+    Parameters
+    ----------
+    tsne_coords : np.ndarray of shape (n_samples, 2)
+        Pre-computed t-SNE 2D coordinates.
+    labels : np.ndarray
+        Cluster labels for each point.
+    title_suffix : str
+        Algorithm name for the title.
+    """
+    print_subheader(f"t-SNE Scatter Plot (pre-computed) -- {title_suffix}")
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_LARGE)
+
+    unique_labels = sorted(set(labels))
+    for label in unique_labels:
+        mask = labels == label
+        color = "#999999" if label == -1 else CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+        name = "Noise" if label == -1 else f"Cluster {label}"
+        ax.scatter(tsne_coords[mask, 0], tsne_coords[mask, 1], c=color,
+                   label=name, alpha=0.5, s=8, edgecolors="none")
+
+    ax.set_xlabel("t-SNE Dimension 1", fontsize=12)
+    ax.set_ylabel("t-SNE Dimension 2", fontsize=12)
+    ax.set_title(f"t-SNE Cluster Visualization -- {title_suffix}",
+                 fontsize=14, fontweight="bold")
+    ax.legend(markerscale=3, fontsize=10, loc="best")
+    fig.tight_layout()
+
+    filename = f"08_tsne_clusters_{title_suffix.lower().replace(' ', '_')}.png"
+    _save_plot(fig, filename)
+
+
+def plot_dendrogram_precomputed(X, method="ward", max_display=30,
+                                 sample_size=1000):
+    """
+    Plot a dendrogram using a small in-memory sample (fast, no heavy compute).
+
+    Parameters
+    ----------
+    X : array-like
+        Scaled feature matrix (will be sampled to sample_size).
+    method : str
+        Linkage method.
+    max_display : int
+        Max leaf nodes to show.
+    sample_size : int
+        Number of points to sample (default 1000 for speed).
+    """
+    print_subheader("Dendrogram (small sample)")
+
+    X_sample, _ = _sample_data(X, np.zeros(len(X)), sample_size)
+
+    Z = linkage(X_sample, method=method)
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
+    dendrogram(Z, truncate_mode="lastp", p=max_display, ax=ax,
+               leaf_rotation=90, leaf_font_size=9,
+               color_threshold=0.7 * max(Z[:, 2]))
+
+    ax.set_xlabel("Sample Index (or cluster size)", fontsize=12)
+    ax.set_ylabel("Distance", fontsize=12)
+    ax.set_title(f"Hierarchical Clustering Dendrogram ({method} linkage)",
+                 fontsize=14, fontweight="bold")
+    fig.tight_layout()
+    _save_plot(fig, "14_dendrogram.png")
+
