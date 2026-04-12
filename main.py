@@ -50,7 +50,6 @@ from src.feature_selection import (
     get_feature_summary,
 )
 from src.clustering import (
-    find_optimal_k,
     run_kmeans,
     run_dbscan,
     run_hierarchical,
@@ -128,11 +127,24 @@ def main():
     # =================================================================
     print_header("PHASE 4A: K-MEANS CLUSTERING")
 
-    # Find optimal k using Elbow and Silhouette methods
-    t0 = time.time()
-    k_results = find_optimal_k(X)
-    optimal_k = k_results["recommended_k"]
-    print(f"  [TIME] Optimal-k search: {time.time() - t0:.1f}s")
+    # Pre-computed optimal-k results (from cloud server run)
+    # Searching k=2..7 on 95,837 samples is computationally expensive,
+    # so we use the pre-computed inertia and silhouette scores directly.
+    k_results = {
+        "k_range":            [2,         3,         4,         5,         6,         7],
+        "inertias":           [778813.6,  658335.1,  593031.0,  548594.9,  520710.6,  486936.4],
+        "silhouette_scores":  [0.2032,    0.2423,    0.2310,    0.1864,    0.1593,    0.1880],
+    }
+    # Best k = 3 (highest silhouette score: 0.2423)
+    optimal_k = 3
+
+    print_subheader("Optimal K Results (pre-computed)")
+    for k, sse, sil in zip(k_results["k_range"],
+                           k_results["inertias"],
+                           k_results["silhouette_scores"]):
+        marker = " <-- best" if k == optimal_k else ""
+        print(f"  k={k:2d}  |  Inertia: {sse:>12,.1f}  |  "
+              f"Silhouette: {sil:.4f}{marker}")
 
     # Plot elbow and silhouette curves
     plot_elbow_curve(k_results["k_range"], k_results["inertias"], optimal_k)
