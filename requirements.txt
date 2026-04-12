@@ -1,4 +1,4 @@
-# Core dependencies (local + cloud)
+# Core dependencies
 pandas
 numpy
 scikit-learn

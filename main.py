@@ -1,21 +1,22 @@
 # =============================================================================
-# main.py -- Amazon Music Clustering Pipeline (Lightweight Local Runner)
+# main.py -- Amazon Music Clustering Pipeline (All-in-One, CPU)
 # =============================================================================
-# This script performs ZERO heavy ML computation. It loads pre-computed
-# results from cloud_compute.py and:
-#   1. Loads raw data (for metadata)
-#   2. Preprocesses features (fast: just scaling)
-#   3. Loads cloud-computed cluster labels, metrics, and embeddings
-#   4. Generates ALL 14 visualization plots
-#   5. Exports the final CSV with cluster labels
+# Single-file pipeline that handles everything:
+#   1. Load & clean data
+#   2. Feature selection & scaling
+#   3. K-Means (optimal k search), DBSCAN, Hierarchical clustering
+#   4. Evaluation metrics
+#   5. t-SNE embedding
+#   6. All visualizations
+#   7. Final CSV export
 #
-# PREREQUISITES:
-#   Run cloud_compute.py on a cloud server first, then copy:
-#     data/processed/cloud_results.npz
-#     data/processed/cloud_metrics.json
-#   to this project before running main.py.
+# Optimized for speed on CPU:
+#   - MiniBatchKMeans for the k-search sweep
+#   - Parallel silhouette scoring via joblib
+#   - Reduced sample sizes for t-SNE & silhouette diagrams
+#   - Aggressive downsampling for expensive O(n^2) operations
 #
-# EXPECTED RUNTIME: < 30 seconds on any machine.
+# USAGE:  python main.py
 # =============================================================================
 
 import sys
@@ -37,15 +38,24 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Ensure project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from sklearn.cluster import MiniBatchKMeans, KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, davies_bouldin_score, silhouette_samples
+from joblib import Parallel, delayed
+from datetime import datetime
+
 from src.utils import (
-    print_header,
-    print_subheader,
-    CLUSTERED_OUTPUT_PATH,
+    RAW_DATASET_PATH,
     CLUSTERING_FEATURES,
     REFERENCE_COLUMNS,
     DROP_COLUMNS,
     PROCESSED_DATA_DIR,
-    RAW_DATASET_PATH,
+    RANDOM_STATE,
+    CLUSTERED_OUTPUT_PATH,
+    print_header,
+    print_subheader,
+    print_metric,
 )
 from src.data_preprocessing import (
     load_dataset,
@@ -79,149 +89,309 @@ from src.visualization import (
     plot_dendrogram_precomputed,
 )
 
-# Paths for cloud-computed results
+# Output paths for cached results
 CLOUD_RESULTS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_results.npz")
 CLOUD_METRICS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_metrics.json")
+os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 
 
-def load_cloud_results():
-    """
-    Load pre-computed results from cloud_compute.py.
+# ---------------------------------------------------------------------------
+# Timing utility
+# ---------------------------------------------------------------------------
+class Timer:
+    """Context manager for timestamped phase tracking."""
 
-    Returns
-    -------
-    tuple of (dict, dict)
-        - arrays: dict of numpy arrays (labels, embeddings, etc.)
-        - metrics: dict of evaluation metrics and k-search data
-    """
-    if not os.path.exists(CLOUD_RESULTS_PATH):
-        raise FileNotFoundError(
-            f"Cloud results not found at: {CLOUD_RESULTS_PATH}\n"
-            f"Run 'python cloud_compute.py' on a cloud server first, "
-            f"then copy the output files here."
-        )
+    def __init__(self, label):
+        self.label = label
 
-    arrays = dict(np.load(CLOUD_RESULTS_PATH, allow_pickle=True))
-    with open(CLOUD_METRICS_PATH, "r") as f:
-        metrics = json.load(f)
+    def __enter__(self):
+        self.start = time.time()
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"  [{ts}] START  {self.label}")
+        return self
 
-    print(f"[INFO] Loaded cloud results from: {CLOUD_RESULTS_PATH}")
-    print(f"       Arrays: {list(arrays.keys())}")
-    print(f"       Metrics: {list(metrics.keys())}")
-    return arrays, metrics
+    def __exit__(self, *args):
+        self.elapsed = time.time() - self.start
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"  [{ts}] DONE   {self.label} ({self.elapsed:.2f}s)")
 
 
+def timestamp():
+    """Return current timestamp string."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
+# Fast clustering helpers
+# ---------------------------------------------------------------------------
+def _fit_k(X, k):
+    """Fit MiniBatchKMeans for a single k and return (k, inertia, silhouette)."""
+    model = MiniBatchKMeans(
+        n_clusters=k, random_state=RANDOM_STATE,
+        batch_size=2048, n_init=5, max_iter=200,
+    )
+    labels = model.fit_predict(X)
+    sil = silhouette_score(X, labels, sample_size=8000,
+                           random_state=RANDOM_STATE)
+    return k, float(model.inertia_), sil
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
 def main():
-    """Run the lightweight local pipeline."""
+    """Run the full clustering pipeline on CPU."""
     pipeline_start = time.time()
+    print("=" * 72)
+    print("  Amazon Music Clustering Pipeline")
+    print(f"  Backend : CPU (scikit-learn)")
+    print(f"  Started : {timestamp()}")
+    print("=" * 72)
 
     # =================================================================
-    # PHASE 1: Load raw data
+    # 1. Load & preprocess
     # =================================================================
-    print_header("PHASE 1: DATA LOADING")
+    print_header("1. LOADING & PREPROCESSING")
 
-    df = load_dataset()
+    with Timer("Load CSV"):
+        df = load_dataset()
+
+    with Timer("Clean data"):
+        df = clean_dataset(df)
+
+    with Timer("Prepare features"):
+        metadata, features_df = drop_non_clustering_columns(df)
+        selected_features = select_clustering_features(features_df)
+
+        feature_summary = get_feature_summary(selected_features)
+        print_subheader("Feature Summary")
+        print(feature_summary.to_string())
+
+        corr_matrix = compute_correlation_matrix(selected_features)
+
+    with Timer("Scale features"):
+        scaled_features, scaler = scale_features(selected_features, method="standard")
+        X = scaled_features.values
+        print(f"    Scaled {X.shape[1]} features ({X.shape[0]:,} samples)")
 
     # =================================================================
-    # PHASE 2: Preprocessing (fast -- just cleaning & scaling)
+    # 2. K-Means optimal k search (parallel, MiniBatchKMeans)
     # =================================================================
-    print_header("PHASE 2: PREPROCESSING")
+    print_header("2. K-MEANS OPTIMAL K SEARCH")
 
-    df = clean_dataset(df)
-    metadata, features_df = drop_non_clustering_columns(df)
-    selected_features = select_clustering_features(features_df)
+    k_range = list(range(2, 11))
 
-    feature_summary = get_feature_summary(selected_features)
-    print_subheader("Feature Summary")
-    print(feature_summary.to_string())
+    with Timer("Parallel k-search (MiniBatchKMeans)"):
+        results = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(_fit_k)(X, k) for k in k_range
+        )
+        # Sort by k to maintain order
+        results.sort(key=lambda r: r[0])
 
-    corr_matrix = compute_correlation_matrix(selected_features)
-    scaled_features, scaler = scale_features(selected_features, method="standard")
-    X = scaled_features.values
+        inertias = [r[1] for r in results]
+        sil_scores = [r[2] for r in results]
+
+        for k, inertia, sil in results:
+            print(f"    k={k:2d}  |  Inertia: {inertia:>12,.1f}  |  "
+                  f"Silhouette: {sil:.4f}")
+
+    best_k = k_range[int(np.argmax(sil_scores))]
+    print(f"\n  --> Best k = {best_k} (silhouette = {max(sil_scores):.4f})")
 
     # =================================================================
-    # PHASE 3: Load cloud-computed results
+    # 3. K-Means with best k (full KMeans for final labels)
     # =================================================================
-    print_header("PHASE 3: LOADING CLOUD-COMPUTED RESULTS")
+    print_header(f"3. K-MEANS CLUSTERING (k={best_k})")
 
-    cloud_arrays, cloud_metrics = load_cloud_results()
+    with Timer(f"KMeans fit (k={best_k})"):
+        kmeans = KMeans(n_clusters=best_k, random_state=RANDOM_STATE,
+                        n_init=10, max_iter=300)
+        kmeans_labels = kmeans.fit_predict(X)
+        km_inertia = float(kmeans.inertia_)
+        sizes = dict(zip(*np.unique(kmeans_labels, return_counts=True)))
+        print(f"    Cluster sizes: {sizes}")
 
-    kmeans_labels = cloud_arrays["kmeans_labels"]
-    dbscan_labels = cloud_arrays["dbscan_labels"]
-    hier_labels = cloud_arrays["hier_labels"]
-    tsne_coords = cloud_arrays["tsne_coords"]
-    tsne_labels = cloud_arrays["tsne_labels"]
-    sil_values = cloud_arrays["sil_values"]
-    sil_labels = cloud_arrays["sil_labels"]
+    # =================================================================
+    # 4. DBSCAN
+    # =================================================================
+    print_header("4. DBSCAN CLUSTERING")
 
-    k_search = cloud_metrics["k_search"]
-    km_metrics = cloud_metrics["kmeans"]
-    db_metrics = cloud_metrics["dbscan"]
-    h_metrics = cloud_metrics["hierarchical"]
-    optimal_k = k_search["best_k"]
+    with Timer("DBSCAN fit"):
+        dbscan = DBSCAN(eps=1.5, min_samples=10)
+        dbscan_labels = dbscan.fit_predict(X)
+        n_dbscan = len(set(dbscan_labels)) - (1 if -1 in dbscan_labels else 0)
+        n_noise = int((dbscan_labels == -1).sum())
+        print(f"    Clusters: {n_dbscan}, Noise: {n_noise:,}")
 
-    # Print pre-computed metrics
-    print_subheader("Pre-computed Evaluation Metrics")
-    print(f"\n  K-Means (k={optimal_k}):")
-    print(f"    Silhouette     : {km_metrics['silhouette_score']:.4f}")
-    print(f"    Davies-Bouldin : {km_metrics['davies_bouldin_index']:.4f}")
-    print(f"    Inertia        : {km_metrics['inertia']:,.1f}")
+    # =================================================================
+    # 5. Hierarchical Clustering
+    # =================================================================
+    print_header(f"5. HIERARCHICAL CLUSTERING (k={best_k})")
 
-    print(f"\n  DBSCAN:")
-    print(f"    Clusters       : {db_metrics['n_clusters']}")
-    print(f"    Noise points   : {db_metrics['n_noise']:,}")
-    print(f"    Silhouette     : {db_metrics['silhouette_score']:.4f}")
-    print(f"    Davies-Bouldin : {db_metrics['davies_bouldin_index']:.4f}")
+    with Timer("Hierarchical fit"):
+        hier = AgglomerativeClustering(n_clusters=best_k, linkage="ward")
+        hier_labels = hier.fit_predict(X)
+        sizes_h = dict(zip(*np.unique(hier_labels, return_counts=True)))
+        print(f"    Cluster sizes: {sizes_h}")
 
-    print(f"\n  Hierarchical (k={optimal_k}):")
-    print(f"    Silhouette     : {h_metrics['silhouette_score']:.4f}")
-    print(f"    Davies-Bouldin : {h_metrics['davies_bouldin_index']:.4f}")
+    # =================================================================
+    # 6. Evaluation metrics
+    # =================================================================
+    print_header("6. EVALUATION METRICS")
+
+    metrics = {}
+
+    with Timer("K-Means metrics"):
+        km_sil = float(silhouette_score(X, kmeans_labels,
+                                         sample_size=10000,
+                                         random_state=RANDOM_STATE))
+        km_dbi = float(davies_bouldin_score(X, kmeans_labels))
+        metrics["kmeans"] = {
+            "silhouette_score": km_sil,
+            "davies_bouldin_index": km_dbi,
+            "inertia": km_inertia,
+            "n_clusters": best_k,
+        }
+        print(f"    Silhouette: {km_sil:.4f}  |  DBI: {km_dbi:.4f}  |  "
+              f"Inertia: {km_inertia:,.1f}")
+
+    with Timer("DBSCAN metrics"):
+        if n_dbscan >= 2:
+            mask = dbscan_labels != -1
+            db_sil = float(silhouette_score(X[mask], dbscan_labels[mask],
+                                             sample_size=10000,
+                                             random_state=RANDOM_STATE))
+            db_dbi = float(davies_bouldin_score(X[mask], dbscan_labels[mask]))
+        else:
+            db_sil = -1.0
+            db_dbi = float("inf")
+        metrics["dbscan"] = {
+            "silhouette_score": db_sil,
+            "davies_bouldin_index": db_dbi,
+            "n_clusters": n_dbscan,
+            "n_noise": n_noise,
+        }
+        print(f"    Silhouette: {db_sil:.4f}  |  DBI: {db_dbi:.4f}")
+
+    with Timer("Hierarchical metrics"):
+        h_sil = float(silhouette_score(X, hier_labels,
+                                        sample_size=10000,
+                                        random_state=RANDOM_STATE))
+        h_dbi = float(davies_bouldin_score(X, hier_labels))
+        metrics["hierarchical"] = {
+            "silhouette_score": h_sil,
+            "davies_bouldin_index": h_dbi,
+            "n_clusters": best_k,
+        }
+        print(f"    Silhouette: {h_sil:.4f}  |  DBI: {h_dbi:.4f}")
+
+    metrics["k_search"] = {
+        "k_range": k_range,
+        "inertias": inertias,
+        "silhouette_scores": sil_scores,
+        "best_k": best_k,
+    }
 
     # Algorithm comparison table
     print_subheader("Algorithm Comparison")
     comparison = pd.DataFrame({
-        "K-Means": km_metrics,
-        "DBSCAN": db_metrics,
-        "Hierarchical": h_metrics,
+        "K-Means": metrics["kmeans"],
+        "DBSCAN": metrics["dbscan"],
+        "Hierarchical": metrics["hierarchical"],
     }).T
     print(comparison.to_string())
 
-    # Cluster profiles & interpretation
-    cluster_profiles = profile_clusters(
-        selected_features, kmeans_labels, CLUSTERING_FEATURES
-    )
-    interpretations = interpret_clusters(cluster_profiles)
+    # =================================================================
+    # 7. t-SNE embedding (sampled for speed)
+    # =================================================================
+    print_header("7. t-SNE EMBEDDING")
+
+    tsne_sample_size = 5000
+    rng = np.random.RandomState(RANDOM_STATE)
+    tsne_indices = np.sort(rng.choice(len(X), tsne_sample_size, replace=False))
+
+    with Timer(f"t-SNE ({tsne_sample_size:,} samples)"):
+        tsne = TSNE(n_components=2, random_state=RANDOM_STATE,
+                     perplexity=30, n_iter=750, learning_rate="auto")
+        tsne_coords = tsne.fit_transform(X[tsne_indices])
+        tsne_labels = kmeans_labels[tsne_indices]
+        print(f"    Output shape: {tsne_coords.shape}")
 
     # =================================================================
-    # PHASE 4: Generate ALL visualizations (rendering only -- fast)
+    # 8. Silhouette per-sample values (sampled)
     # =================================================================
-    print_header("PHASE 4: GENERATING VISUALIZATIONS")
+    print_header("8. SILHOUETTE DIAGRAM DATA")
 
-    # --- EDA plots ---
+    sil_sample_size = 12000
+    sil_indices = np.sort(rng.choice(len(X), sil_sample_size, replace=False))
+
+    with Timer(f"Silhouette samples ({sil_sample_size:,} points)"):
+        sil_values = silhouette_samples(X[sil_indices],
+                                        kmeans_labels[sil_indices])
+        sil_labels = kmeans_labels[sil_indices]
+        print(f"    Output shape: {sil_values.shape}")
+
+    # =================================================================
+    # 9. Cluster profiles & interpretation
+    # =================================================================
+    print_header("9. CLUSTER PROFILES (K-Means)")
+
+    with Timer("Cluster profiling"):
+        cluster_profiles = profile_clusters(
+            selected_features, kmeans_labels, CLUSTERING_FEATURES
+        )
+        interpretations = interpret_clusters(cluster_profiles)
+
+    # =================================================================
+    # 10. Save computed results (for caching / reuse)
+    # =================================================================
+    print_header("10. SAVING COMPUTED RESULTS")
+
+    with Timer("Save .npz"):
+        np.savez_compressed(
+            CLOUD_RESULTS_PATH,
+            kmeans_labels=kmeans_labels,
+            dbscan_labels=dbscan_labels,
+            hier_labels=hier_labels,
+            tsne_coords=tsne_coords,
+            tsne_labels=tsne_labels,
+            sil_values=sil_values,
+            sil_labels=sil_labels,
+        )
+        fsize = os.path.getsize(CLOUD_RESULTS_PATH) / 1024
+        print(f"    -> {CLOUD_RESULTS_PATH} ({fsize:.1f} KB)")
+
+    with Timer("Save .json"):
+        with open(CLOUD_METRICS_PATH, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"    -> {CLOUD_METRICS_PATH}")
+
+    # =================================================================
+    # 11. Generate all visualizations
+    # =================================================================
+    print_header("11. GENERATING VISUALIZATIONS")
+
+    # EDA plots
     plot_feature_distributions_eda(selected_features, CLUSTERING_FEATURES)
     plot_correlation_heatmap(corr_matrix)
     plot_boxplots(selected_features, CLUSTERING_FEATURES)
 
-    # --- Elbow & silhouette score plots (from pre-computed data) ---
-    plot_elbow_curve(
-        k_search["k_range"], k_search["inertias"], optimal_k
-    )
-    plot_silhouette_scores(
-        k_search["k_range"], k_search["silhouette_scores"], optimal_k
-    )
+    # Elbow & silhouette score plots
+    plot_elbow_curve(k_range, inertias, best_k)
+    plot_silhouette_scores(k_range, sil_scores, best_k)
 
-    # --- Silhouette diagram (from pre-computed per-sample values) ---
-    plot_silhouette_diagram_precomputed(sil_values, sil_labels, optimal_k)
+    # Silhouette diagram
+    plot_silhouette_diagram_precomputed(sil_values, sil_labels, best_k)
 
-    # --- PCA scatter plots (PCA is fast, computed here) ---
+    # PCA scatter plots (PCA is fast)
     plot_pca_clusters(X, kmeans_labels, "K-Means")
     plot_pca_clusters(X, dbscan_labels, "DBSCAN")
     plot_pca_clusters(X, hier_labels, "Hierarchical")
 
-    # --- t-SNE scatter (from pre-computed embedding) ---
+    # t-SNE scatter (from computed embedding)
     plot_tsne_precomputed(tsne_coords, tsne_labels, "K-Means")
 
-    # --- Cluster profile plots ---
+    # Cluster profile plots
     plot_cluster_heatmap(cluster_profiles)
     plot_cluster_radar(cluster_profiles)
     plot_cluster_bar_comparison(cluster_profiles)
@@ -230,13 +400,13 @@ def main():
     )
     plot_cluster_sizes(kmeans_labels)
 
-    # --- Dendrogram (small sample, computed here -- fast) ---
+    # Dendrogram (small sample)
     plot_dendrogram_precomputed(X)
 
     # =================================================================
-    # PHASE 5: Final analysis & export
+    # 12. Final analysis & export
     # =================================================================
-    print_header("PHASE 5: FINAL ANALYSIS & EXPORT")
+    print_header("12. FINAL ANALYSIS & EXPORT")
 
     # Build final DataFrame
     final_df = metadata.copy()
@@ -267,16 +437,16 @@ def main():
     # =================================================================
     # Summary
     # =================================================================
-    elapsed = time.time() - pipeline_start
+    total = time.time() - pipeline_start
     print_header("PIPELINE COMPLETE")
     print(f"  Dataset          : {len(final_df):,} songs")
     print(f"  Features used    : {len(CLUSTERING_FEATURES)}")
-    print(f"  Optimal K        : {optimal_k}")
-    print(f"  Silhouette (KM)  : {km_metrics['silhouette_score']:.4f}")
-    print(f"  Davies-Bouldin   : {km_metrics['davies_bouldin_index']:.4f}")
+    print(f"  Optimal K        : {best_k}")
+    print(f"  Silhouette (KM)  : {km_sil:.4f}")
+    print(f"  Davies-Bouldin   : {km_dbi:.4f}")
     print(f"  Output CSV       : {CLUSTERED_OUTPUT_PATH}")
     print(f"  Plots saved to   : outputs/plots/")
-    print(f"  Total time       : {elapsed:.1f}s")
+    print(f"  Total time       : {total:.1f}s ({total / 60:.1f} min)")
     print()
 
     return final_df
