@@ -1,23 +1,22 @@
 # =============================================================================
-# cloud_compute.py -- Heavy ML Computation (Run on Cloud Server)
+# cloud_compute.py -- Heavy ML Computation (GPU-Accelerated for P100)
 # =============================================================================
-# This script performs ALL computationally expensive operations:
-#   - K-Means optimal k search (elbow + silhouette)
-#   - K-Means clustering (k=3)
-#   - DBSCAN clustering
-#   - Hierarchical clustering
-#   - Evaluation metrics (silhouette, davies-bouldin)
-#   - t-SNE embedding (sampled)
-#   - Silhouette per-sample values (sampled)
+# Run this on a cloud server with NVIDIA P100 GPU and RAPIDS cuML installed.
+# Falls back to scikit-learn CPU if cuML is not available.
 #
-# Results are saved to data/processed/cloud_results.npz so that main.py
-# can load them instantly without any heavy computation.
+# GPU Setup (Colab / cloud):
+#   !pip install cuml-cu11 cudf-cu11    # For CUDA 11.x
+#   OR
+#   !pip install cuml-cu12 cudf-cu12    # For CUDA 12.x
 #
 # USAGE:
 #   python cloud_compute.py
 #
-# After running, copy the data/processed/ folder back to your local
-# machine, then run: python main.py
+# OUTPUT:
+#   data/processed/cloud_results.npz   -- arrays (labels, embeddings)
+#   data/processed/cloud_metrics.json  -- evaluation metrics
+#
+# Copy outputs to your local machine, then run: python main.py
 # =============================================================================
 
 import sys
@@ -27,23 +26,16 @@ import json
 import warnings
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
-from sklearn.metrics import silhouette_score, davies_bouldin_score
-from sklearn.metrics import silhouette_samples
-from sklearn.manifold import TSNE
-
 from src.utils import (
     RAW_DATASET_PATH,
     CLUSTERING_FEATURES,
-    REFERENCE_COLUMNS,
-    DROP_COLUMNS,
     PROCESSED_DATA_DIR,
     RANDOM_STATE,
     print_header,
@@ -51,32 +43,163 @@ from src.utils import (
     print_metric,
 )
 
+# ---------------------------------------------------------------------------
+# GPU Detection & Import Strategy
+# ---------------------------------------------------------------------------
+USE_GPU = False
+
+try:
+    import cuml
+    from cuml.cluster import KMeans as cuKMeans
+    from cuml.cluster import DBSCAN as cuDBSCAN
+    from cuml.cluster import AgglomerativeClustering as cuHierarchical
+    from cuml.manifold import TSNE as cuTSNE
+    from cuml.metrics.cluster import silhouette_score as cu_silhouette_score
+    from cuml.preprocessing import StandardScaler as cuStandardScaler
+    import cudf
+    USE_GPU = True
+    print("[GPU] RAPIDS cuML detected -- using GPU acceleration (P100)")
+except ImportError:
+    print("[CPU] RAPIDS cuML not found -- falling back to scikit-learn (CPU)")
+
+# CPU fallbacks (always imported for metrics not in cuML)
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+from sklearn.metrics import silhouette_samples
+from joblib import Parallel, delayed
+
 # Output paths
 CLOUD_RESULTS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_results.npz")
 CLOUD_METRICS_PATH = os.path.join(PROCESSED_DATA_DIR, "cloud_metrics.json")
 os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Timing utilities
+# ---------------------------------------------------------------------------
+class Timer:
+    """Context manager for timestamped phase tracking."""
+
+    def __init__(self, label):
+        self.label = label
+
+    def __enter__(self):
+        self.start = time.time()
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"  [{ts}] START  {self.label}")
+        return self
+
+    def __exit__(self, *args):
+        self.elapsed = time.time() - self.start
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"  [{ts}] DONE   {self.label} ({self.elapsed:.2f}s)")
+
+
+def timestamp():
+    """Return current timestamp string."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
+# GPU-aware helpers
+# ---------------------------------------------------------------------------
+def fit_kmeans(X, k):
+    """Fit KMeans using GPU if available, else CPU."""
+    if USE_GPU:
+        model = cuKMeans(n_clusters=k, random_state=RANDOM_STATE,
+                         max_iter=300, n_init=10)
+        labels = model.fit_predict(X)
+        return np.asarray(labels), float(model.inertia_)
+    else:
+        model = KMeans(n_clusters=k, random_state=RANDOM_STATE,
+                       n_init=10, max_iter=300)
+        labels = model.fit_predict(X)
+        return labels, float(model.inertia_)
+
+
+def compute_silhouette(X, labels):
+    """Compute silhouette score using GPU if available."""
+    if USE_GPU:
+        return float(cu_silhouette_score(X, labels))
+    else:
+        return float(silhouette_score(X, labels))
+
+
+def fit_dbscan(X, eps=1.5, min_samples=10):
+    """Fit DBSCAN using GPU if available."""
+    if USE_GPU:
+        model = cuDBSCAN(eps=eps, min_samples=min_samples)
+        labels = np.asarray(model.fit_predict(X))
+    else:
+        model = DBSCAN(eps=eps, min_samples=min_samples)
+        labels = model.fit_predict(X)
+    return labels
+
+
+def fit_hierarchical(X, n_clusters):
+    """Fit Agglomerative Clustering using GPU if available."""
+    if USE_GPU:
+        # cuML AgglomerativeClustering supports n_clusters and connectivity
+        model = cuHierarchical(n_clusters=n_clusters)
+        labels = np.asarray(model.fit_predict(X))
+    else:
+        model = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
+        labels = model.fit_predict(X)
+    return labels
+
+
+def compute_tsne(X, n_components=2, perplexity=30, n_iter=1000):
+    """Compute t-SNE using GPU if available."""
+    if USE_GPU:
+        tsne = cuTSNE(n_components=n_components, random_state=RANDOM_STATE,
+                      perplexity=perplexity, n_iter=n_iter,
+                      learning_rate="auto")
+        coords = np.asarray(tsne.fit_transform(X))
+    else:
+        tsne = TSNE(n_components=n_components, random_state=RANDOM_STATE,
+                    perplexity=perplexity, n_iter=n_iter,
+                    learning_rate="auto")
+        coords = tsne.fit_transform(X)
+    return coords
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
 def main():
-    """Run all heavy computations and save results."""
-    start = time.time()
+    """Run all heavy computations with GPU acceleration."""
+    pipeline_start = time.time()
+    print("=" * 72)
+    print(f"  CLOUD COMPUTE -- Amazon Music Clustering")
+    print(f"  Backend : {'GPU (RAPIDS cuML)' if USE_GPU else 'CPU (scikit-learn)'}")
+    print(f"  Started : {timestamp()}")
+    print("=" * 72)
 
     # =================================================================
     # 1. Load & preprocess
     # =================================================================
     print_header("1. LOADING & PREPROCESSING")
 
-    df = pd.read_csv(RAW_DATASET_PATH)
-    print(f"  Loaded: {df.shape[0]:,} rows x {df.shape[1]} columns")
+    with Timer("Load CSV"):
+        df = pd.read_csv(RAW_DATASET_PATH)
+        print(f"    Rows: {df.shape[0]:,}, Cols: {df.shape[1]}")
 
-    df = df.drop_duplicates().dropna().reset_index(drop=True)
-    print(f"  After cleaning: {df.shape[0]:,} rows")
+    with Timer("Clean data"):
+        df = df.drop_duplicates().dropna().reset_index(drop=True)
+        print(f"    After cleaning: {df.shape[0]:,} rows")
 
-    # Select clustering features
-    feature_df = df[CLUSTERING_FEATURES].copy()
-    scaler = StandardScaler()
-    X = scaler.fit_transform(feature_df)
-    print(f"  Scaled {X.shape[1]} features with StandardScaler")
+    with Timer("Scale features"):
+        feature_df = df[CLUSTERING_FEATURES].copy()
+        if USE_GPU:
+            scaler = cuStandardScaler()
+            X_gpu = scaler.fit_transform(cudf.DataFrame(feature_df))
+            X = np.asarray(X_gpu)
+        else:
+            scaler = StandardScaler()
+            X = scaler.fit_transform(feature_df)
+        print(f"    Scaled {X.shape[1]} features ({X.shape[0]:,} samples)")
 
     # =================================================================
     # 2. K-Means optimal k search
@@ -88,17 +211,14 @@ def main():
     sil_scores = []
 
     for k in k_range:
-        t0 = time.time()
-        km = KMeans(n_clusters=k, random_state=RANDOM_STATE, n_init=10)
-        labels = km.fit_predict(X)
-        inertias.append(float(km.inertia_))
-        sil = float(silhouette_score(X, labels))
-        sil_scores.append(sil)
-        elapsed = time.time() - t0
-        print(f"  k={k:2d}  |  Inertia: {km.inertia_:>12,.1f}  |  "
-              f"Silhouette: {sil:.4f}  |  {elapsed:.1f}s")
+        with Timer(f"k={k}"):
+            labels_k, inertia_k = fit_kmeans(X, k)
+            sil_k = compute_silhouette(X, labels_k)
+            inertias.append(inertia_k)
+            sil_scores.append(sil_k)
+            print(f"    Inertia: {inertia_k:>12,.1f}  |  Silhouette: {sil_k:.4f}")
 
-    best_k = k_range[np.argmax(sil_scores)]
+    best_k = k_range[int(np.argmax(sil_scores))]
     print(f"\n  --> Best k = {best_k} (silhouette = {max(sil_scores):.4f})")
 
     # =================================================================
@@ -106,32 +226,31 @@ def main():
     # =================================================================
     print_header(f"3. K-MEANS CLUSTERING (k={best_k})")
 
-    kmeans = KMeans(n_clusters=best_k, random_state=RANDOM_STATE, n_init=10)
-    kmeans_labels = kmeans.fit_predict(X)
-    print(f"  Cluster sizes: {dict(zip(*np.unique(kmeans_labels, return_counts=True)))}")
+    with Timer(f"KMeans fit (k={best_k})"):
+        kmeans_labels, km_inertia = fit_kmeans(X, best_k)
+        sizes = dict(zip(*np.unique(kmeans_labels, return_counts=True)))
+        print(f"    Cluster sizes: {sizes}")
 
     # =================================================================
     # 4. DBSCAN
     # =================================================================
     print_header("4. DBSCAN CLUSTERING")
 
-    dbscan = DBSCAN(eps=1.5, min_samples=10)
-    dbscan_labels = dbscan.fit_predict(X)
-
-    n_dbscan_clusters = len(set(dbscan_labels)) - (1 if -1 in dbscan_labels else 0)
-    n_noise = int((dbscan_labels == -1).sum())
-    print(f"  Clusters: {n_dbscan_clusters}, Noise: {n_noise:,}")
+    with Timer("DBSCAN fit"):
+        dbscan_labels = fit_dbscan(X, eps=1.5, min_samples=10)
+        n_dbscan = len(set(dbscan_labels)) - (1 if -1 in dbscan_labels else 0)
+        n_noise = int((dbscan_labels == -1).sum())
+        print(f"    Clusters: {n_dbscan}, Noise: {n_noise:,}")
 
     # =================================================================
     # 5. Hierarchical Clustering
     # =================================================================
     print_header(f"5. HIERARCHICAL CLUSTERING (k={best_k})")
 
-    t0 = time.time()
-    hier = AgglomerativeClustering(n_clusters=best_k, linkage="ward")
-    hier_labels = hier.fit_predict(X)
-    print(f"  Cluster sizes: {dict(zip(*np.unique(hier_labels, return_counts=True)))}")
-    print(f"  Time: {time.time() - t0:.1f}s")
+    with Timer("Hierarchical fit"):
+        hier_labels = fit_hierarchical(X, n_clusters=best_k)
+        sizes_h = dict(zip(*np.unique(hier_labels, return_counts=True)))
+        print(f"    Cluster sizes: {sizes_h}")
 
     # =================================================================
     # 6. Evaluation metrics
@@ -140,52 +259,44 @@ def main():
 
     metrics = {}
 
-    # K-Means
-    km_sil = float(silhouette_score(X, kmeans_labels))
-    km_dbi = float(davies_bouldin_score(X, kmeans_labels))
-    km_inertia = float(kmeans.inertia_)
-    metrics["kmeans"] = {
-        "silhouette_score": km_sil,
-        "davies_bouldin_index": km_dbi,
-        "inertia": km_inertia,
-        "n_clusters": best_k,
-    }
-    print_subheader("K-Means")
-    print_metric("Silhouette", km_sil)
-    print_metric("Davies-Bouldin", km_dbi)
-    print_metric("Inertia", km_inertia, ",.1f")
+    with Timer("K-Means metrics"):
+        km_sil = compute_silhouette(X, kmeans_labels)
+        km_dbi = float(davies_bouldin_score(X, kmeans_labels))
+        metrics["kmeans"] = {
+            "silhouette_score": km_sil,
+            "davies_bouldin_index": km_dbi,
+            "inertia": km_inertia,
+            "n_clusters": best_k,
+        }
+        print(f"    Silhouette: {km_sil:.4f}  |  DBI: {km_dbi:.4f}  |  "
+              f"Inertia: {km_inertia:,.1f}")
 
-    # DBSCAN (only if >1 cluster found)
-    if n_dbscan_clusters >= 2:
-        mask = dbscan_labels != -1
-        db_sil = float(silhouette_score(X[mask], dbscan_labels[mask]))
-        db_dbi = float(davies_bouldin_score(X[mask], dbscan_labels[mask]))
-    else:
-        db_sil = -1.0
-        db_dbi = float("inf")
-    metrics["dbscan"] = {
-        "silhouette_score": db_sil,
-        "davies_bouldin_index": db_dbi,
-        "n_clusters": n_dbscan_clusters,
-        "n_noise": n_noise,
-    }
-    print_subheader("DBSCAN")
-    print_metric("Silhouette", db_sil)
-    print_metric("Davies-Bouldin", db_dbi)
+    with Timer("DBSCAN metrics"):
+        if n_dbscan >= 2:
+            mask = dbscan_labels != -1
+            db_sil = compute_silhouette(X[mask], dbscan_labels[mask])
+            db_dbi = float(davies_bouldin_score(X[mask], dbscan_labels[mask]))
+        else:
+            db_sil = -1.0
+            db_dbi = float("inf")
+        metrics["dbscan"] = {
+            "silhouette_score": db_sil,
+            "davies_bouldin_index": db_dbi,
+            "n_clusters": n_dbscan,
+            "n_noise": n_noise,
+        }
+        print(f"    Silhouette: {db_sil:.4f}  |  DBI: {db_dbi:.4f}")
 
-    # Hierarchical
-    h_sil = float(silhouette_score(X, hier_labels))
-    h_dbi = float(davies_bouldin_score(X, hier_labels))
-    metrics["hierarchical"] = {
-        "silhouette_score": h_sil,
-        "davies_bouldin_index": h_dbi,
-        "n_clusters": best_k,
-    }
-    print_subheader("Hierarchical")
-    print_metric("Silhouette", h_sil)
-    print_metric("Davies-Bouldin", h_dbi)
+    with Timer("Hierarchical metrics"):
+        h_sil = compute_silhouette(X, hier_labels)
+        h_dbi = float(davies_bouldin_score(X, hier_labels))
+        metrics["hierarchical"] = {
+            "silhouette_score": h_sil,
+            "davies_bouldin_index": h_dbi,
+            "n_clusters": best_k,
+        }
+        print(f"    Silhouette: {h_sil:.4f}  |  DBI: {h_dbi:.4f}")
 
-    # Store elbow/silhouette search data
     metrics["k_search"] = {
         "k_range": k_range,
         "inertias": inertias,
@@ -194,76 +305,82 @@ def main():
     }
 
     # =================================================================
-    # 7. t-SNE embedding (sampled, 5000 points)
+    # 7. t-SNE embedding (sampled)
     # =================================================================
     print_header("7. t-SNE EMBEDDING")
 
-    tsne_sample_size = 5000
+    tsne_sample_size = 8000 if USE_GPU else 5000
     rng = np.random.RandomState(RANDOM_STATE)
-    tsne_indices = rng.choice(len(X), tsne_sample_size, replace=False)
-    tsne_indices.sort()
+    tsne_indices = np.sort(rng.choice(len(X), tsne_sample_size, replace=False))
 
-    t0 = time.time()
-    tsne = TSNE(n_components=2, random_state=RANDOM_STATE,
-                perplexity=30, n_iter=1000, learning_rate="auto")
-    tsne_coords = tsne.fit_transform(X[tsne_indices])
-    tsne_labels = kmeans_labels[tsne_indices]
-    print(f"  Computed t-SNE on {tsne_sample_size:,} samples in {time.time() - t0:.1f}s")
+    with Timer(f"t-SNE ({tsne_sample_size:,} samples)"):
+        tsne_coords = compute_tsne(X[tsne_indices])
+        tsne_labels = kmeans_labels[tsne_indices]
+        print(f"    Output shape: {tsne_coords.shape}")
 
     # =================================================================
-    # 8. Silhouette per-sample values (sampled, 15000 points)
+    # 8. Silhouette per-sample values (sampled)
     # =================================================================
     print_header("8. SILHOUETTE DIAGRAM DATA")
 
-    sil_sample_size = 15000
-    sil_indices = rng.choice(len(X), sil_sample_size, replace=False)
-    sil_indices.sort()
+    sil_sample_size = 20000 if USE_GPU else 15000
+    sil_indices = np.sort(rng.choice(len(X), sil_sample_size, replace=False))
 
-    t0 = time.time()
-    sil_values = silhouette_samples(X[sil_indices], kmeans_labels[sil_indices])
-    sil_labels = kmeans_labels[sil_indices]
-    print(f"  Computed silhouette samples on {sil_sample_size:,} points in {time.time() - t0:.1f}s")
+    with Timer(f"Silhouette samples ({sil_sample_size:,} points)"):
+        sil_values = silhouette_samples(X[sil_indices],
+                                        kmeans_labels[sil_indices])
+        sil_labels = kmeans_labels[sil_indices]
+        print(f"    Output shape: {sil_values.shape}")
 
     # =================================================================
     # 9. Cluster profiles
     # =================================================================
     print_header("9. CLUSTER PROFILES (K-Means)")
 
-    profile_df = feature_df.copy()
-    profile_df["Cluster"] = kmeans_labels
-    cluster_profiles = profile_df.groupby("Cluster")[CLUSTERING_FEATURES].mean()
-    print(cluster_profiles.round(3).to_string())
+    with Timer("Cluster profiling"):
+        profile_df = feature_df.copy()
+        profile_df["Cluster"] = kmeans_labels
+        cluster_profiles = profile_df.groupby("Cluster")[CLUSTERING_FEATURES].mean()
+        print(cluster_profiles.round(3).to_string())
 
     # =================================================================
-    # 10. Save everything
+    # 10. Save results
     # =================================================================
     print_header("10. SAVING RESULTS")
 
-    # Save arrays to npz
-    np.savez_compressed(
-        CLOUD_RESULTS_PATH,
-        kmeans_labels=kmeans_labels,
-        dbscan_labels=dbscan_labels,
-        hier_labels=hier_labels,
-        tsne_coords=tsne_coords,
-        tsne_labels=tsne_labels,
-        sil_values=sil_values,
-        sil_labels=sil_labels,
-    )
-    print(f"  Saved arrays  -> {CLOUD_RESULTS_PATH}")
+    with Timer("Save .npz"):
+        np.savez_compressed(
+            CLOUD_RESULTS_PATH,
+            kmeans_labels=kmeans_labels,
+            dbscan_labels=dbscan_labels,
+            hier_labels=hier_labels,
+            tsne_coords=tsne_coords,
+            tsne_labels=tsne_labels,
+            sil_values=sil_values,
+            sil_labels=sil_labels,
+        )
+        fsize = os.path.getsize(CLOUD_RESULTS_PATH) / 1024
+        print(f"    -> {CLOUD_RESULTS_PATH} ({fsize:.1f} KB)")
 
-    # Save metrics to JSON
-    with open(CLOUD_METRICS_PATH, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"  Saved metrics -> {CLOUD_METRICS_PATH}")
+    with Timer("Save .json"):
+        with open(CLOUD_METRICS_PATH, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"    -> {CLOUD_METRICS_PATH}")
 
-    total = time.time() - start
+    # =================================================================
+    # Summary
+    # =================================================================
+    total = time.time() - pipeline_start
     print_header("CLOUD COMPUTE COMPLETE")
-    print(f"  Total time: {total:.1f}s ({total / 60:.1f} min)")
-    print(f"\n  Copy these files to your local machine:")
+    print(f"  Backend      : {'GPU (RAPIDS cuML)' if USE_GPU else 'CPU (scikit-learn)'}")
+    print(f"  Total time   : {total:.1f}s ({total / 60:.1f} min)")
+    print(f"  Finished at  : {timestamp()}")
+    print(f"\n  Output files:")
     print(f"    {CLOUD_RESULTS_PATH}")
     print(f"    {CLOUD_METRICS_PATH}")
-    print(f"\n  Then run: python main.py")
+    print(f"\n  Next step: copy outputs to local machine, then run:")
+    print(f"    python main.py")
+    print()
 
 
 if __name__ == "__main__":
