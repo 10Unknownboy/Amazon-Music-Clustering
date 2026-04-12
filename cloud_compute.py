@@ -111,7 +111,7 @@ def fit_kmeans(X, k):
         model = cuKMeans(n_clusters=k, random_state=RANDOM_STATE,
                          max_iter=300, n_init=10)
         labels = model.fit_predict(X)
-        return np.asarray(labels), float(model.inertia_)
+        return labels.to_numpy() if hasattr(labels, 'to_numpy') else np.asarray(labels), float(model.inertia_)
     else:
         model = KMeans(n_clusters=k, random_state=RANDOM_STATE,
                        n_init=10, max_iter=300)
@@ -131,7 +131,8 @@ def fit_dbscan(X, eps=1.5, min_samples=10):
     """Fit DBSCAN using GPU if available."""
     if USE_GPU:
         model = cuDBSCAN(eps=eps, min_samples=min_samples)
-        labels = np.asarray(model.fit_predict(X))
+        raw = model.fit_predict(X)
+        labels = raw.to_numpy() if hasattr(raw, 'to_numpy') else np.asarray(raw)
     else:
         model = DBSCAN(eps=eps, min_samples=min_samples)
         labels = model.fit_predict(X)
@@ -143,7 +144,8 @@ def fit_hierarchical(X, n_clusters):
     if USE_GPU:
         # cuML AgglomerativeClustering supports n_clusters and connectivity
         model = cuHierarchical(n_clusters=n_clusters)
-        labels = np.asarray(model.fit_predict(X))
+        raw = model.fit_predict(X)
+        labels = raw.to_numpy() if hasattr(raw, 'to_numpy') else np.asarray(raw)
     else:
         model = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
         labels = model.fit_predict(X)
@@ -156,7 +158,8 @@ def compute_tsne(X, n_components=2, perplexity=30, n_iter=1000):
         tsne = cuTSNE(n_components=n_components, random_state=RANDOM_STATE,
                       perplexity=perplexity, n_iter=n_iter,
                       learning_rate="auto")
-        coords = np.asarray(tsne.fit_transform(X))
+        raw = tsne.fit_transform(X)
+        coords = raw.to_numpy() if hasattr(raw, 'to_numpy') else np.asarray(raw)
     else:
         tsne = TSNE(n_components=n_components, random_state=RANDOM_STATE,
                     perplexity=perplexity, n_iter=n_iter,
@@ -195,10 +198,14 @@ def main():
         if USE_GPU:
             scaler = cuStandardScaler()
             X_gpu = scaler.fit_transform(cudf.DataFrame(feature_df))
-            X = np.asarray(X_gpu)
+            # Keep CuPy array for GPU-accelerated cuML operations
+            X = X_gpu.to_cupy()
+            # NumPy copy for CPU-only operations (DBI, silhouette_samples)
+            X_np = X_gpu.to_numpy()
         else:
             scaler = StandardScaler()
             X = scaler.fit_transform(feature_df)
+            X_np = X
         print(f"    Scaled {X.shape[1]} features ({X.shape[0]:,} samples)")
 
     # =================================================================
@@ -261,7 +268,7 @@ def main():
 
     with Timer("K-Means metrics"):
         km_sil = compute_silhouette(X, kmeans_labels)
-        km_dbi = float(davies_bouldin_score(X, kmeans_labels))
+        km_dbi = float(davies_bouldin_score(X_np, kmeans_labels))
         metrics["kmeans"] = {
             "silhouette_score": km_sil,
             "davies_bouldin_index": km_dbi,
@@ -275,7 +282,7 @@ def main():
         if n_dbscan >= 2:
             mask = dbscan_labels != -1
             db_sil = compute_silhouette(X[mask], dbscan_labels[mask])
-            db_dbi = float(davies_bouldin_score(X[mask], dbscan_labels[mask]))
+            db_dbi = float(davies_bouldin_score(X_np[mask], dbscan_labels[mask]))
         else:
             db_sil = -1.0
             db_dbi = float("inf")
@@ -289,7 +296,7 @@ def main():
 
     with Timer("Hierarchical metrics"):
         h_sil = compute_silhouette(X, hier_labels)
-        h_dbi = float(davies_bouldin_score(X, hier_labels))
+        h_dbi = float(davies_bouldin_score(X_np, hier_labels))
         metrics["hierarchical"] = {
             "silhouette_score": h_sil,
             "davies_bouldin_index": h_dbi,
@@ -314,7 +321,7 @@ def main():
     tsne_indices = np.sort(rng.choice(len(X), tsne_sample_size, replace=False))
 
     with Timer(f"t-SNE ({tsne_sample_size:,} samples)"):
-        tsne_coords = compute_tsne(X[tsne_indices])
+        tsne_coords = compute_tsne(X_np[tsne_indices])
         tsne_labels = kmeans_labels[tsne_indices]
         print(f"    Output shape: {tsne_coords.shape}")
 
@@ -327,7 +334,7 @@ def main():
     sil_indices = np.sort(rng.choice(len(X), sil_sample_size, replace=False))
 
     with Timer(f"Silhouette samples ({sil_sample_size:,} points)"):
-        sil_values = silhouette_samples(X[sil_indices],
+        sil_values = silhouette_samples(X_np[sil_indices],
                                         kmeans_labels[sil_indices])
         sil_labels = kmeans_labels[sil_indices]
         print(f"    Output shape: {sil_values.shape}")
