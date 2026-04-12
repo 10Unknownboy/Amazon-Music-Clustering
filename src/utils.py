@@ -72,7 +72,7 @@ DROP_COLUMNS = [
 # Default hyperparameters
 # ---------------------------------------------------------------------------
 # K-Means: range of cluster counts to search
-KMEANS_K_RANGE = range(2, 16)
+KMEANS_K_RANGE = range(2, 11)
 
 # DBSCAN defaults
 DBSCAN_EPS = 1.5
