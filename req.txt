@@ -1,0 +1,5 @@
+# GPU dependencies (cloud only -- install on P100/T4/V100 servers)
+cuml-cu11
+cudf-cu11
+cuml-cu12
+cudf-cu12
