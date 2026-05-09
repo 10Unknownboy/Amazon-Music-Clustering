@@ -360,7 +360,7 @@ def plot_tsne_clusters(X, labels, title_suffix="K-Means", sample_size=5000):
     X_sample, labels_sample = _sample_data(X, labels, sample_size)
 
     tsne = TSNE(n_components=2, random_state=RANDOM_STATE,
-                perplexity=30, n_iter=750, learning_rate="auto")
+                perplexity=30, max_iter=500, learning_rate="auto")
     X_tsne = tsne.fit_transform(X_sample)
 
     fig, ax = plt.subplots(figsize=FIGSIZE_LARGE)
