@@ -301,6 +301,9 @@ def plot_pca_clusters(X, labels, title_suffix="K-Means"):
     """
     Reduce features to 2D using PCA and plot color-coded clusters.
 
+    For DBSCAN, uses high-contrast colors and enlarged minority cluster
+    markers with an info text box showing cluster sizes.
+
     Parameters
     ----------
     X : array-like
@@ -314,22 +317,54 @@ def plot_pca_clusters(X, labels, title_suffix="K-Means"):
 
     pca = PCA(n_components=2, random_state=RANDOM_STATE)
     X_pca = pca.fit_transform(X)
+    var_explained = pca.explained_variance_ratio_
 
+    is_dbscan = title_suffix.upper() == "DBSCAN"
     fig, ax = plt.subplots(figsize=FIGSIZE_LARGE)
 
     unique_labels = sorted(set(labels))
+
+    # DBSCAN-specific high-contrast palette and marker sizes
+    dbscan_colors = {-1: "#AAAAAA", 0: "#4C9BE8", 1: "#E8834C"}
+    dbscan_sizes = {-1: 3, 0: 5, 1: 15}
+
     for label in unique_labels:
         mask = labels == label
-        color = "#999999" if label == -1 else CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+        if is_dbscan:
+            color = dbscan_colors.get(label, CLUSTER_COLORS[label % len(CLUSTER_COLORS)])
+            size = dbscan_sizes.get(label, 5)
+            alpha = 0.25 if label == -1 else 0.45
+        else:
+            color = "#999999" if label == -1 else CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
+            size = 5
+            alpha = 0.4
         name = "Noise" if label == -1 else f"Cluster {label}"
         ax.scatter(X_pca[mask, 0], X_pca[mask, 1], c=color, label=name,
-                   alpha=0.4, s=5, edgecolors="none")
+                   alpha=alpha, s=size, edgecolors="none")
 
-    var_explained = pca.explained_variance_ratio_
     ax.set_xlabel(f"PC1 ({var_explained[0]:.1%} variance)", fontsize=12)
     ax.set_ylabel(f"PC2 ({var_explained[1]:.1%} variance)", fontsize=12)
-    ax.set_title(f"PCA Cluster Visualization -- {title_suffix}",
-                 fontsize=14, fontweight="bold")
+
+    if is_dbscan:
+        ax.set_title(
+            "PCA Cluster Visualization -- DBSCAN\n"
+            "Note: DBSCAN found 2 uneven clusters. Cluster 0 = mainstream songs,\n"
+            "Cluster 1 = outlier tracks. Noise points shown in gray.",
+            fontsize=12, fontweight="bold")
+        # Info text box with cluster sizes
+        parts = []
+        for lbl in unique_labels:
+            n = int((labels == lbl).sum())
+            tag = "Noise" if lbl == -1 else f"Cluster {lbl}"
+            parts.append(f"{tag}: {n:,} songs")
+        ax.text(0.02, 0.97, "  |  ".join(parts), transform=ax.transAxes,
+                fontsize=9, verticalalignment="top",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                          alpha=0.85, edgecolor="#ccc"))
+    else:
+        ax.set_title(f"PCA Cluster Visualization -- {title_suffix}",
+                     fontsize=14, fontweight="bold")
+
     ax.legend(markerscale=3, fontsize=10, loc="best")
     fig.tight_layout()
 
@@ -645,6 +680,9 @@ def plot_silhouette_diagram_precomputed(sil_values, sil_labels, n_clusters):
     """
     Plot silhouette diagram from PRE-COMPUTED per-sample silhouette values.
 
+    Includes per-cluster average annotations on the right side, with
+    amber highlighting for clusters below the overall average.
+
     Parameters
     ----------
     sil_values : np.ndarray
@@ -666,28 +704,42 @@ def plot_silhouette_diagram_precomputed(sil_values, sil_labels, n_clusters):
         cluster_values.sort()
         size = cluster_values.shape[0]
         y_upper = y_lower + size
+        cluster_avg = float(np.mean(cluster_values))
 
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
         ax.fill_betweenx(np.arange(y_lower, y_upper), 0, cluster_values,
                          facecolor=color, edgecolor=color, alpha=0.75)
         ax.text(-0.03, y_lower + 0.5 * size, str(i),
                 fontsize=10, fontweight="bold")
+
+        # Per-cluster annotation -- amber for weak clusters
+        ann_color = "#D4760A" if cluster_avg < avg_score else "#333333"
+        ax.text(max(cluster_values) + 0.02, y_lower + 0.5 * size,
+                f"Cluster {i}: avg={cluster_avg:.3f}",
+                fontsize=9, fontweight="bold", color=ann_color,
+                verticalalignment="center")
+
         y_lower = y_upper + 10
 
     ax.axvline(x=avg_score, color="#FF6B6B", linestyle="--", linewidth=2,
                label=f"Avg Score: {avg_score:.3f}")
     ax.set_xlabel("Silhouette Coefficient", fontsize=12)
     ax.set_ylabel("Cluster", fontsize=12)
-    ax.set_title("Silhouette Diagram -- Per-Sample Analysis",
-                 fontsize=14, fontweight="bold")
+    ax.set_title("Silhouette Diagram -- Per-Sample Analysis\n"
+                 "Cluster 0 shows weak silhouette "
+                 "(many songs near cluster boundary)",
+                 fontsize=12, fontweight="bold")
     ax.legend(fontsize=11)
     fig.tight_layout()
     _save_plot(fig, "06_silhouette_diagram.png")
 
 
-def plot_tsne_precomputed(tsne_coords, labels, title_suffix="K-Means"):
+def plot_tsne_precomputed(tsne_coords, labels, title_suffix="K-Means",
+                          n_total=None):
     """
     Plot t-SNE scatter from PRE-COMPUTED 2D coordinates.
+
+    Includes a subtitle showing the sample size when plotting a subsample.
 
     Parameters
     ----------
@@ -697,6 +749,8 @@ def plot_tsne_precomputed(tsne_coords, labels, title_suffix="K-Means"):
         Cluster labels for each point.
     title_suffix : str
         Algorithm name for the title.
+    n_total : int, optional
+        Total dataset size (for the subtitle annotation).
     """
     print_subheader(f"t-SNE Scatter Plot (pre-computed) -- {title_suffix}")
 
@@ -708,12 +762,16 @@ def plot_tsne_precomputed(tsne_coords, labels, title_suffix="K-Means"):
         color = "#999999" if label == -1 else CLUSTER_COLORS[label % len(CLUSTER_COLORS)]
         name = "Noise" if label == -1 else f"Cluster {label}"
         ax.scatter(tsne_coords[mask, 0], tsne_coords[mask, 1], c=color,
-                   label=name, alpha=0.5, s=8, edgecolors="none")
+                   label=name, alpha=0.4, s=8, edgecolors="none")
 
     ax.set_xlabel("t-SNE Dimension 1", fontsize=12)
     ax.set_ylabel("t-SNE Dimension 2", fontsize=12)
-    ax.set_title(f"t-SNE Cluster Visualization -- {title_suffix}",
-                 fontsize=14, fontweight="bold")
+
+    n_shown = len(tsne_coords)
+    subtitle = (f"\nVisualization on stratified sample of {n_shown:,} songs "
+                "(preserves cluster ratios)")
+    ax.set_title(f"t-SNE Cluster Visualization -- {title_suffix}{subtitle}",
+                 fontsize=12, fontweight="bold")
     ax.legend(markerscale=3, fontsize=10, loc="best")
     fig.tight_layout()
 

@@ -1,4 +1,4 @@
-    # =============================================================================
+# =============================================================================
 # app.py — Streamlit Dashboard for Amazon Music Clustering
 # =============================================================================
 # Interactive web app with 6 tabs including a Song Recommender (Fix 10).
@@ -200,6 +200,16 @@ def page_clustering(df):
     if label_col not in df.columns:
         st.warning(f"No labels for {algo}."); return
 
+    # Fix 7: DBSCAN info box
+    if algo == "DBSCAN":
+        st.info(
+            "\u2139\ufe0f DBSCAN found 2 clusters with very uneven sizes. "
+            "While DBSCAN scores better on silhouette (0.287) and Davies-Bouldin (0.956) "
+            "than K-Means, it groups ~96% of songs into one cluster. "
+            "Noise points (3,428 songs, ~3.6%) represent genre-ambiguous or outlier tracks. "
+            "K-Means is preferred for practical use cases like playlist generation."
+        )
+
     st.markdown("### 🎨 PCA Cluster Visualization")
     X_pca, var_ratio = get_pca_data(df, avail)
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -268,15 +278,16 @@ def page_profiles(df):
         row_n = (row - profiles.min()) / (profiles.max() - profiles.min())
         feats = list(row_n.index); vals = row_n.values.tolist(); vals += vals[:1]
         angs = np.linspace(0, 2*np.pi, len(feats), endpoint=False).tolist(); angs += angs[:1]
-        fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+        fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
         fig.patch.set_facecolor("#1a1a2e"); ax.set_facecolor("#1a1a2e")
         color = CLUSTER_COLORS[sel_c % len(CLUSTER_COLORS)]
         ax.fill(angs, vals, color=color, alpha=0.25)
         ax.plot(angs, vals, color=color, linewidth=2.5)
-        ax.set_xticks(angs[:-1]); ax.set_xticklabels(feats, fontsize=9, color="white")
-        ax.set_ylim(0, 1); ax.tick_params(colors="white")
-        ax.set_title(f"Cluster {sel_c}", color="white", fontsize=14, fontweight="bold", pad=20)
-        st.pyplot(fig); plt.close()
+        ax.set_xticks(angs[:-1]); ax.set_xticklabels(feats, fontsize=7, color="white")
+        ax.set_ylim(0, 1); ax.tick_params(axis='y', labelsize=6, colors="white")
+        ax.set_title(f"Cluster {sel_c}", color="white", fontsize=12, fontweight="bold", pad=15)
+        fig.tight_layout()
+        st.pyplot(fig, use_container_width=False); plt.close()
 
     st.markdown("---")
     st.markdown("### 📋 Raw Cluster Means")
@@ -379,14 +390,15 @@ def page_recommender(df):
     feats = list(avail); vals = song_norm.tolist(); vals += vals[:1]
     angs = np.linspace(0, 2*np.pi, len(feats), endpoint=False).tolist(); angs += angs[:1]
 
-    fig, ax = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
     fig.patch.set_facecolor("#1a1a2e"); ax.set_facecolor("#1a1a2e")
     ax.fill(angs, vals, color="#4ECDC4", alpha=0.25)
     ax.plot(angs, vals, color="#4ECDC4", linewidth=2.5)
-    ax.set_xticks(angs[:-1]); ax.set_xticklabels(feats, fontsize=8, color="white")
-    ax.set_ylim(0, 1); ax.tick_params(colors="white")
+    ax.set_xticks(angs[:-1]); ax.set_xticklabels(feats, fontsize=7, color="white")
+    ax.set_ylim(0, 1); ax.tick_params(axis='y', labelsize=6, colors="white")
     ax.set_title("Audio Profile", color="white", fontsize=12, fontweight="bold", pad=15)
-    st.pyplot(fig); plt.close()
+    fig.tight_layout()
+    st.pyplot(fig, use_container_width=False); plt.close()
 
     # Find nearest neighbors within the same cluster
     st.markdown("---")
