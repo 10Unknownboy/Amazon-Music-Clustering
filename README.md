@@ -1,147 +1,188 @@
-# 🎵 Amazon Music Clustering
+# Amazon Music Clustering
 
-> **Unsupervised ML project** that clusters Amazon Music tracks using audio features. Applies EDA, preprocessing, K-Means, DBSCAN, Hierarchical Clustering, PCA & evaluation metrics to group songs into meaningful clusters for recommendations and playlist generation.
-
----
-
-## 📌 Table of Contents
-
-- [Problem Statement](#-problem-statement)
-- [Business Use Cases](#-business-use-cases)
-- [Domain](#-domain)
-- [Skills & Takeaways](#-skills--takeaways)
-- [Tech Stack](#-tech-stack)
-- [Project Structure](#-project-structure)
-- [Setup & Installation](#-setup--installation)
-- [Dataset](#-dataset)
-- [Approach](#-approach)
-- [Evaluation Metrics](#-evaluation-metrics)
-- [Key Visualizations](#-key-visualizations)
-- [Project Deliverables](#-project-deliverables)
-- [Project Guidelines](#-project-guidelines)
-- [License](#-license)
+Unsupervised machine-learning pipeline that groups **95,837 songs** from the Amazon Music catalogue into meaningful clusters based on 10 audio features — without any genre labels.
 
 ---
 
-## 🎯 Problem Statement
+## Problem Statement
 
-With millions of songs available on platforms like Amazon, manually categorizing tracks into genres is impractical. The goal of this project is to **automatically group similar songs** based on their audio characteristics using clustering techniques. By analyzing patterns in features such as **tempo, energy, danceability**, and more, we develop a model that organizes songs into meaningful clusters — potentially representing different musical **genres or moods** — without any prior labels.
+With millions of songs available on streaming platforms, manually categorising tracks into genres is impractical. This project automatically groups similar songs using clustering techniques by analysing patterns in features such as tempo, energy, danceability, and more.
 
----
+## Business Use Cases
 
-## 💼 Business Use Cases
-
-| Use Case                        | Description                                                                                     |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Personalized Playlist Curation** | Automatically group songs that sound similar to enhance playlist generation.                     |
-| **Improved Song Discovery**       | Suggest similar tracks to users based on their preferred audio profile.                          |
-| **Artist Analysis**               | Help artists and producers identify competitive songs in the same audio cluster.                 |
-| **Market Segmentation**           | Streaming platforms can analyze user listening patterns and optimize recommendations/promotions. |
+| Use Case | Description |
+|---|---|
+| **Personalised Playlists** | Automatically curate playlists from same-cluster tracks |
+| **Content Classification** | Replace or supplement manual genre tagging |
+| **New Artist Discovery** | Recommend similar artists via cluster proximity |
+| **Catalogue Analytics** | Understand catalogue composition across energy, mood, and era |
 
 ---
 
-## 🌐 Domain
-
-**Music Analytics / Unsupervised Machine Learning**
-
----
-
-## 🧠 Skills & Takeaways
-
-- Data Exploration & Cleaning
-- Feature Selection & Engineering
-- Data Normalization (StandardScaler / MinMaxScaler)
-- K-Means Clustering & Elbow Method
-- DBSCAN & Hierarchical (Agglomerative) Clustering
-- Silhouette Score & Davies-Bouldin Index
-- PCA & t-SNE for Dimensionality Reduction
-- Cluster Visualization & Interpretation
-- Genre / Mood Inference from Clusters
-- Data Storytelling & Reporting
-- Python (Pandas, NumPy, scikit-learn, Matplotlib, Seaborn)
-
----
-
-## 🛠️ Tech Stack
-
-| Category           | Tools / Libraries                                    |
-| ------------------ | ---------------------------------------------------- |
-| **Language**       | Python 3.x                                           |
-| **Data Handling**  | Pandas, NumPy                                        |
-| **ML / Clustering**| scikit-learn (KMeans, DBSCAN, AgglomerativeClustering)|
-| **Visualization**  | Matplotlib, Seaborn                                  |
-| **Dimensionality** | PCA, t-SNE (sklearn.decomposition / sklearn.manifold) |
-| **Evaluation**     | Silhouette Score, Davies-Bouldin Index, Inertia      |
-| **Bonus App**      | Streamlit                                            |
-| **Version Control**| Git / GitHub                                         |
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 Amazon Music Clustering/
-│
 ├── data/
-│   ├── raw/                        # Original dataset(s)
+│   ├── raw/                        # Original dataset
 │   │   └── single_genre_artists.csv
-│   └── processed/                  # Cleaned & clustered output
-│       └── clustered_songs.csv
-│
-├── src/
-│   ├── data_preprocessing.py       # Loading, cleaning, scaling
-│   ├── feature_selection.py        # Feature selection utilities
-│   ├── clustering.py               # KMeans, DBSCAN, Hierarchical
-│   ├── evaluation.py               # Silhouette, Davies-Bouldin, Inertia
-│   ├── visualization.py            # All plotting functions
-│   └── utils.py                    # Shared helper functions
-│
+│   └── processed/                  # Pipeline outputs
+│       ├── clustered_songs_v2.csv
+│       ├── clustered_songs.csv
+│       ├── results.npz
+│       └── metrics.json
 ├── outputs/
-│   └── plots/                      # Saved visualization images
-│
-├── app.py                          # Streamlit dashboard (bonus)
-├── main.py                         # Main pipeline orchestrator
-├── requirements.txt                # Python dependencies
-├── README.md                       # Project documentation
-├── LICENSE                         # MIT License
-└── .gitignore                      # Git ignore rules
+│   ├── plots/                      # 20 generated visualisations
+│   └── cluster_summary_report.txt
+├── src/
+│   ├── __init__.py
+│   ├── utils.py                    # Paths, constants, helpers
+│   ├── data_preprocessing.py       # Load, clean, transform
+│   ├── feature_selection.py        # Feature selection and correlation
+│   ├── clustering.py               # K-Means, DBSCAN, Hierarchical
+│   ├── evaluation.py               # Metrics and cluster profiling
+│   └── visualization.py            # All plot functions (20 plots)
+├── main.py                         # End-to-end pipeline
+├── app.py                          # Streamlit dashboard (6 pages)
+├── datainsights.py                 # Standalone EDA report generator
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## ⚙️ Setup & Installation
+## Dataset
+
+- **Source:** `single_genre_artists.csv`
+- **Rows:** 95,837 songs
+- **Columns:** 23 (10 used for clustering)
+
+### Clustering Features
+
+| Feature | Description |
+|---|---|
+| `danceability` | How suitable a track is for dancing (0-1) |
+| `energy` | Perceptual measure of intensity and activity (0-1) |
+| `loudness` | Overall loudness in dB |
+| `speechiness` | Presence of spoken words (0-1) |
+| `acousticness` | Likelihood the track is acoustic (0-1) |
+| `instrumentalness` | Likelihood the track has no vocals (0-1) |
+| `liveness` | Presence of a live audience (0-1) |
+| `valence` | Musical positiveness / happiness (0-1) |
+| `tempo` | Estimated tempo in BPM |
+| `duration_ms` | Track duration (log-transformed) |
+
+---
+
+## Preprocessing Pipeline
+
+1. **Log Transform** — `np.log1p(duration_ms)` to reduce heavy right skew
+2. **Winsorisation** — Cap `speechiness` and `instrumentalness` at the 95th percentile
+3. **Standard Scaling** — Zero-mean, unit-variance normalisation
+4. **Genre Family Mapping** — 3,153 raw genres collapsed into 15 families for validation
+5. **Decade Extraction** — Release year parsed into decade bins for temporal analysis
+
+---
+
+## Clustering Results
+
+### Algorithm Comparison
+
+| Algorithm | Silhouette | Davies-Bouldin | Clusters | Noise |
+|---|---|---|---|---|
+| **K-Means (k=3)** | 0.2431 | 1.5498 | 3 | - |
+| DBSCAN | 0.2866 | 0.9564 | 2 | 3,428 |
+| Hierarchical | 0.2454 | 1.5666 | 3 | - |
+
+### Cluster Profiles (K-Means, k=3)
+
+| Cluster | Label | Size | Key Traits |
+|---|---|---|---|
+| 0 | speech-heavy + live-feel | 12,787 (13.3%) | speechiness=0.81, liveness=0.43, 76.7% Spoken Word |
+| 1 | high-energy | 52,177 (54.4%) | energy=0.69, loudness=-7.6, 36% Pop, 14% Rock |
+| 2 | acoustic + low-energy | 30,873 (32.2%) | acousticness=0.75, valence=0.41, 31% Pop, 5% Folk |
+
+### Key Findings
+
+- Audio-only clustering independently recovered genre boundaries (Cluster 0 = 76.7% Spoken Word) without supervision
+- Pre-1960s music dominated by Cluster 2 (acoustic); post-1970s by Cluster 1 (high-energy)
+- k=3 selected over k=6 (silhouette 32.5% higher)
+
+---
+
+## Visualisations (20 Plots)
+
+The pipeline generates 20 plots automatically saved to `outputs/plots/`:
+
+| Plot | Description |
+|---|---|
+| 01 | Feature distributions (EDA) |
+| 02 | Correlation heatmap |
+| 03 | Feature boxplots |
+| 04 | Elbow curve (inertia vs k) |
+| 05 | Silhouette scores vs k |
+| 06 | Silhouette diagram (per-sample, annotated) |
+| 07 | PCA scatter (K-Means, DBSCAN, Hierarchical) |
+| 08 | t-SNE scatter (10K stratified sample) |
+| 09 | Cluster feature heatmap |
+| 10 | Cluster radar charts |
+| 11 | Cluster bar comparison |
+| 12 | Feature distributions by cluster |
+| 13 | Cluster sizes |
+| 14 | Dendrogram |
+| 15 | Genre family per cluster (stacked bar) |
+| 16 | Genre-cluster heatmap |
+| 17 | Popularity by cluster (boxplot) |
+| 18 | Decade by cluster (grouped bar) |
+
+---
+
+## Streamlit Dashboard
+
+Interactive web app with 6 pages:
+
+| Page | Features |
+|---|---|
+| **Overview** | Key metrics, cluster distribution, auto-generated labels |
+| **EDA** | Feature statistics, correlation heatmap, distributions |
+| **Clustering** | PCA scatter for each algorithm, cluster sizes, saved plots |
+| **Profiles** | Feature heatmap, radar chart, raw cluster means |
+| **Explore** | Filter by cluster/genre/search, download CSV |
+| **Recommender** | Song search, audio profile radar, top-10 similar songs |
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
-- Python 3.9+ installed on your system
-- Git installed
+- Python 3.10+
+- pip
 
-### Steps
+### Installation
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/10UNknownboy/Amazon-Music-Clustering.git
 cd Amazon-Music-Clustering
-
-# 2. Create & activate virtual environment
-python -m venv env
-
-# Windows
-env\Scripts\activate
-
-# macOS / Linux
-source env/bin/activate
-
-# 3. Install dependencies
 pip install -r requirements.txt
+```
 
-# 4. Place the dataset
-# Copy single_genre_artists.csv into data/raw/
+### Run the Pipeline
 
-# 5. Run the pipeline
+```bash
 python main.py
+```
 
-# 6. (Optional) Launch Streamlit dashboard
+This will:
+1. Load and preprocess the dataset
+2. Run K-Means, DBSCAN, and Hierarchical clustering
+3. Generate 20 plots and a summary report
+4. Export `clustered_songs_v2.csv`
+
+### Launch the Dashboard
+
+```bash
 streamlit run app.py
 ```
 
@@ -275,6 +316,6 @@ streamlit run app.py
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

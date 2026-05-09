@@ -328,3 +328,5 @@ def generate_insights():
 
 if __name__ == "__main__":
     generate_insights()
+
+

@@ -158,7 +158,7 @@ def drop_non_clustering_columns(df):
 
 
 # ---------------------------------------------------------------------------
-# Feature transforms (Fix 1 & Fix 2)
+# Feature transforms
 # ---------------------------------------------------------------------------
 def log_transform_duration(df):
     """
@@ -220,7 +220,7 @@ def winsorize_outliers(df, columns=None, upper_percentile=0.95):
 
 
 # ---------------------------------------------------------------------------
-# Genre & decade enrichment (Fix 3 & Fix 9)
+# Genre & decade enrichment
 # ---------------------------------------------------------------------------
 def add_genre_family(df):
     """
@@ -311,3 +311,4 @@ def scale_features(df, method="standard"):
 
     print(f"[INFO] Features scaled using {method.upper()} scaler.")
     return scaled_df, scaler
+

@@ -213,3 +213,6 @@ def run_hierarchical(X, n_clusters=None, linkage=None):
 
     print(f"  Cluster sizes: {dict(zip(*np.unique(labels, return_counts=True)))}")
     return labels, model
+
+
+

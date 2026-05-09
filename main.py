@@ -105,15 +105,15 @@ def _fit_k(X, k):
 
 # =============================================================================
 def main():
-    """Run the full clustering pipeline with all 10 fixes applied."""
+    """Run the full clustering pipeline."""
     pipeline_start = time.time()
     print("=" * 72)
-    print("  Amazon Music Clustering Pipeline (v2 — all fixes applied)")
+    print("  Amazon Music Clustering Pipeline")
     print(f"  Started : {timestamp()}")
     print("=" * 72)
 
     # =================================================================
-    # 1. LOAD & PREPROCESS (Fixes 1, 2, 3, 9)
+    # 1. LOAD & PREPROCESS
     # =================================================================
     print_header("1. LOADING & PREPROCESSING")
 
@@ -123,20 +123,20 @@ def main():
     with Timer("Clean data"):
         df = clean_dataset(df)
 
-    with Timer("Genre family mapping (Fix 3)"):
+    with Timer("Genre family mapping"):
         df = add_genre_family(df)
 
-    with Timer("Decade extraction (Fix 9)"):
+    with Timer("Decade extraction"):
         df = add_decade(df)
 
     with Timer("Prepare features"):
         metadata, features_df = drop_non_clustering_columns(df)
         selected_features = select_clustering_features(features_df)
 
-    with Timer("Log-transform duration_ms (Fix 1)"):
+    with Timer("Log-transform duration_ms"):
         selected_features = log_transform_duration(selected_features)
 
-    with Timer("Winsorize outliers (Fix 2)"):
+    with Timer("Winsorize outliers"):
         selected_features = winsorize_outliers(selected_features)
 
     with Timer("Feature summary"):
@@ -168,9 +168,9 @@ def main():
     print(f"\n  --> Auto-selected k = {best_k_auto} (silhouette = {max(sil_scores):.4f})")
 
     # =================================================================
-    # 3. FIX 4: Compare k=3 vs k=6, pick best
+    # 3. Compare k=3 vs k=6, pick best
     # =================================================================
-    print_header("3. K-MEANS: k=3 vs k=6 COMPARISON (Fix 4)")
+    print_header("3. K-MEANS: k=3 vs k=6 COMPARISON")
 
     k_candidates = [3, 6]
     km_results = {}
@@ -313,9 +313,9 @@ def main():
         sil_labels = kmeans_labels[sil_idx]
 
     # =================================================================
-    # 8. CLUSTER PROFILES & NAMING (Fix 5)
+    # 8. CLUSTER PROFILES & NAMING
     # =================================================================
-    print_header("8. CLUSTER PROFILES & NAMING (Fix 5)")
+    print_header("8. CLUSTER PROFILES & NAMING")
 
     with Timer("Cluster profiling"):
         cluster_profiles = profile_clusters(selected_features, kmeans_labels,
@@ -364,7 +364,7 @@ def main():
     plot_dendrogram_precomputed(X)
 
     # =================================================================
-    # 11. BUILD FINAL DATAFRAME & NEW ANALYSES (Fixes 3, 7, 8, 9)
+    # 11. BUILD FINAL DATAFRAME & NEW ANALYSES
     # =================================================================
     print_header("11. FINAL ANALYSIS & NEW VISUALIZATIONS")
 
@@ -383,17 +383,17 @@ def main():
     if 'decade' in df.columns:
         final_df['decade'] = df['decade'].values
 
-    # Fix 7: Genre validation per cluster
-    with Timer("Genre per cluster plots (Fix 7)"):
+    # Genre validation per cluster
+    with Timer("Genre per cluster plots"):
         plot_genre_per_cluster(final_df, labels_map=interpretations)
         plot_genre_cluster_heatmap(final_df, labels_map=interpretations)
 
-    # Fix 8: Popularity vs cluster
-    with Timer("Popularity analysis (Fix 8)"):
+    # Popularity vs cluster
+    with Timer("Popularity analysis"):
         pop_insight = plot_popularity_by_cluster(final_df, labels_map=interpretations)
 
-    # Fix 9: Decade vs cluster
-    with Timer("Decade analysis (Fix 9)"):
+    # Decade vs cluster
+    with Timer("Decade analysis"):
         decade_insight = plot_decade_by_cluster(final_df, labels_map=interpretations)
 
     # Sample tracks per cluster
@@ -406,7 +406,7 @@ def main():
         for _, row in sample.iterrows():
             print(f"    *  {row['name_song']} -- {row['name_artists']} [{row['genres']}]")
 
-    # Export CSV v2
+    # Export final clustered CSV
     final_df.to_csv(CLUSTERED_OUTPUT_V2_PATH, index=False)
     # Also keep the original path for backward compat with app.py
     final_df.to_csv(CLUSTERED_OUTPUT_PATH, index=False)
@@ -414,22 +414,22 @@ def main():
     print(f"       Total rows: {len(final_df):,}")
 
     # =================================================================
-    # 12. SUMMARY REPORT (Fix 6 — DBSCAN recommendation)
+    # 12. SUMMARY REPORT
     # =================================================================
     print_header("12. SUMMARY REPORT")
 
     r = []
     r.append("=" * 72)
-    r.append("  AMAZON MUSIC CLUSTERING — SUMMARY REPORT (v2)")
+    r.append("  AMAZON MUSIC CLUSTERING -- SUMMARY REPORT")
     r.append("=" * 72)
     r.append(f"\n  Generated : {timestamp()}")
     r.append(f"  Dataset   : {RAW_DATASET_PATH}")
     r.append(f"  Songs     : {len(final_df):,}")
     r.append(f"  Features  : {', '.join(CLUSTERING_FEATURES)}")
     r.append(f"\n  Preprocessing applied:")
-    r.append(f"    - Log-transformed duration_ms (Fix 1)")
-    r.append(f"    - Winsorized speechiness & instrumentalness at p95 (Fix 2)")
-    r.append(f"    - Genre families collapsed to ~15 categories (Fix 3)")
+    r.append(f"    - Log-transformed duration_ms")
+    r.append(f"    - Winsorized speechiness & instrumentalness at p95")
+    r.append(f"    - Genre families collapsed to ~15 categories")
     r.append("")
 
     r.append("=" * 72)
@@ -453,7 +453,7 @@ def main():
     r.append("")
 
     r.append("=" * 72)
-    r.append("  ALGORITHM COMPARISON & RECOMMENDATION (Fix 6)")
+    r.append("  ALGORITHM COMPARISON & RECOMMENDATION")
     r.append("=" * 72)
     r.append(comparison.to_string())
     r.append("")
@@ -471,7 +471,7 @@ def main():
     r.append("")
 
     r.append("=" * 72)
-    r.append("  CLUSTER CHARACTERISTICS (Fix 5 — auto-named)")
+    r.append("  CLUSTER CHARACTERISTICS (auto-named)")
     r.append("=" * 72)
     for cid in sorted(interpretations.keys()):
         label = interpretations[cid]
@@ -486,9 +486,9 @@ def main():
                     r.append(f"    {feat:20s}: {row[feat]:.4f}")
     r.append("")
 
-    # Genre breakdown per cluster (Fix 7)
+    # Genre breakdown per cluster
     r.append("=" * 72)
-    r.append("  GENRE FAMILY BREAKDOWN PER CLUSTER (Fix 7)")
+    r.append("  GENRE FAMILY BREAKDOWN PER CLUSTER")
     r.append("=" * 72)
     if 'genre_family' in final_df.columns:
         ct = pd.crosstab(final_df['cluster_kmeans'], final_df['genre_family'],
@@ -567,3 +567,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+

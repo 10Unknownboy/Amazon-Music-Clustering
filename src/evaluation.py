@@ -230,7 +230,7 @@ def name_cluster(row):
 def interpret_clusters(cluster_profiles):
     """
     Generate human-readable labels for each cluster using the new
-    threshold-based naming system (Fix 5).
+    threshold-based naming system.
 
     Parameters
     ----------
@@ -253,3 +253,17 @@ def interpret_clusters(cluster_profiles):
         print(f"  Cluster {cluster_id}: {label}")
 
     return interpretations
+
+
+
+
+
+
+
+
+
+
+
+
+
+
