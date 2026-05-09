@@ -755,3 +755,197 @@ def plot_dendrogram_precomputed(X, method="ward", max_display=30,
     fig.tight_layout()
     _save_plot(fig, "14_dendrogram.png")
 
+
+# =============================================================================
+# New Analysis Visualizations (Fixes 7, 8, 9)
+# =============================================================================
+def plot_genre_per_cluster(df, label_col="cluster_kmeans", labels_map=None):
+    """
+    Plot a stacked bar chart showing genre_family distribution per cluster.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with 'genre_family' and cluster label columns.
+    label_col : str
+        Column containing cluster labels.
+    labels_map : dict, optional
+        Mapping of cluster_id → descriptive label.
+    """
+    if 'genre_family' not in df.columns or label_col not in df.columns:
+        print("  [SKIP] genre_family or cluster column not found.")
+        return
+
+    ct = pd.crosstab(df[label_col], df['genre_family'], normalize='index') * 100
+    ct = ct[ct.mean().sort_values(ascending=False).index]  # sort by popularity
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ct.plot(kind='bar', stacked=True, ax=ax, colormap='tab20', edgecolor='white',
+            linewidth=0.3)
+
+    if labels_map:
+        xlabels = [f"C{i}: {labels_map.get(i, i)}" for i in ct.index]
+        ax.set_xticklabels(xlabels, rotation=30, ha='right')
+
+    ax.set_xlabel("Cluster", fontsize=12)
+    ax.set_ylabel("Percentage (%)", fontsize=12)
+    ax.set_title("Genre Family Distribution per Cluster",
+                 fontsize=14, fontweight="bold")
+    ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8,
+              title="Genre Family")
+    fig.tight_layout()
+    _save_plot(fig, "15_genre_per_cluster.png")
+
+
+def plot_genre_cluster_heatmap(df, label_col="cluster_kmeans", labels_map=None):
+    """
+    Plot a heatmap of genre_family % per cluster for validation.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with 'genre_family' and cluster label columns.
+    label_col : str
+        Column containing cluster labels.
+    labels_map : dict, optional
+        Mapping of cluster_id → descriptive label.
+    """
+    if 'genre_family' not in df.columns or label_col not in df.columns:
+        print("  [SKIP] genre_family or cluster column not found.")
+        return
+
+    ct = pd.crosstab(df[label_col], df['genre_family'], normalize='index') * 100
+    # Keep top 10 genre families for readability
+    top_genres = ct.mean().sort_values(ascending=False).head(10).index
+    ct = ct[top_genres]
+
+    if labels_map:
+        ct.index = [f"C{i}: {labels_map.get(i, i)}" for i in ct.index]
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    sns.heatmap(ct, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=0.5,
+                ax=ax, cbar_kws={"label": "% of Cluster"})
+    ax.set_title("Genre Validation: % of Each Genre Family per Cluster",
+                 fontsize=14, fontweight="bold", pad=15)
+    ax.set_ylabel("Cluster")
+    ax.set_xlabel("Genre Family")
+    fig.tight_layout()
+    _save_plot(fig, "16_genre_cluster_heatmap.png")
+
+
+def plot_popularity_by_cluster(df, label_col="cluster_kmeans", labels_map=None):
+    """
+    Plot a boxplot of popularity_songs distribution across clusters.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with 'popularity_songs' and cluster label columns.
+    label_col : str
+        Column containing cluster labels.
+    labels_map : dict, optional
+        Mapping of cluster_id → descriptive label.
+
+    Returns
+    -------
+    str
+        One-line insight about the highest-popularity cluster.
+    """
+    if 'popularity_songs' not in df.columns or label_col not in df.columns:
+        print("  [SKIP] popularity_songs or cluster column not found.")
+        return ""
+
+    plot_df = df[[label_col, 'popularity_songs']].copy()
+    plot_df = plot_df[plot_df[label_col] != -1]
+
+    if labels_map:
+        plot_df['cluster_name'] = plot_df[label_col].map(
+            lambda x: f"C{x}: {labels_map.get(x, x)}")
+    else:
+        plot_df['cluster_name'] = plot_df[label_col].astype(str)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    order = sorted(plot_df['cluster_name'].unique())
+    n_clusters = len(order)
+    palette = CLUSTER_COLORS[:n_clusters]
+    sns.boxplot(x='cluster_name', y='popularity_songs', data=plot_df,
+                ax=ax, palette=palette, linewidth=0.8, fliersize=1)
+    ax.set_xlabel("Cluster", fontsize=12)
+    ax.set_ylabel("Popularity Score", fontsize=12)
+    ax.set_title("Song Popularity Distribution by Cluster",
+                 fontsize=14, fontweight="bold")
+    plt.xticks(rotation=30, ha='right')
+    fig.tight_layout()
+    _save_plot(fig, "17_popularity_by_cluster.png")
+
+    # Generate insight
+    medians = plot_df.groupby(label_col)['popularity_songs'].median()
+    best_c = medians.idxmax()
+    best_label = labels_map.get(best_c, best_c) if labels_map else best_c
+    insight = (f"Cluster {best_c} (\"{best_label}\") has the highest "
+               f"median popularity at {medians[best_c]:.0f}.")
+    print(f"  [INSIGHT] {insight}")
+    return insight
+
+
+def plot_decade_by_cluster(df, label_col="cluster_kmeans", labels_map=None):
+    """
+    Plot a grouped bar chart of release decade vs cluster.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with 'decade' and cluster label columns.
+    label_col : str
+        Column containing cluster labels.
+    labels_map : dict, optional
+        Mapping of cluster_id → descriptive label.
+
+    Returns
+    -------
+    str
+        One-line insight about decade distribution.
+    """
+    if 'decade' not in df.columns or label_col not in df.columns:
+        print("  [SKIP] decade or cluster column not found.")
+        return ""
+
+    plot_df = df[[label_col, 'decade']].dropna().copy()
+    plot_df = plot_df[plot_df[label_col] != -1]
+    plot_df['decade'] = plot_df['decade'].astype(int)
+
+    # Filter to decades with enough data
+    decade_counts = plot_df['decade'].value_counts()
+    valid_decades = decade_counts[decade_counts >= 50].index
+    plot_df = plot_df[plot_df['decade'].isin(valid_decades)]
+
+    ct = pd.crosstab(plot_df['decade'], plot_df[label_col], normalize='index') * 100
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    n_clusters = len(ct.columns)
+    x = np.arange(len(ct.index))
+    width = 0.8 / n_clusters
+
+    for i, col in enumerate(ct.columns):
+        offset = (i - n_clusters / 2 + 0.5) * width
+        color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
+        lbl = f"C{col}: {labels_map.get(col, col)}" if labels_map else f"Cluster {col}"
+        ax.bar(x + offset, ct[col].values, width, label=lbl,
+               color=color, edgecolor='white', linewidth=0.5)
+
+    ax.set_xlabel("Decade", fontsize=12)
+    ax.set_ylabel("% of Songs", fontsize=12)
+    ax.set_title("Cluster Distribution Across Release Decades",
+                 fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(d) + 's' for d in ct.index], rotation=45)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    _save_plot(fig, "18_decade_by_cluster.png")
+
+    # Generate insight
+    dominant = ct.idxmax(axis=1)
+    insight = f"Decade distribution shows temporal clustering patterns across {len(valid_decades)} decades."
+    print(f"  [INSIGHT] {insight}")
+    return insight
+

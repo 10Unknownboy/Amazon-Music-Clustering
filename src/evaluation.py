@@ -185,10 +185,52 @@ def profile_clusters(df, labels, features=None):
     return cluster_means
 
 
+def name_cluster(row):
+    """
+    Generate a descriptive cluster name based on the top 2 dominant
+    audio features of that cluster.
+
+    Uses threshold-based rules on the mean feature values to identify
+    the most distinguishing audio traits of each cluster.
+
+    Parameters
+    ----------
+    row : pd.Series
+        Mean feature values for a single cluster.
+
+    Returns
+    -------
+    str
+        A descriptive label like 'high-energy + danceable'.
+    """
+    traits = []
+    if row.get('speechiness', 0) > 0.5:
+        traits.append('speech-heavy')
+    if row.get('acousticness', 0) > 0.6:
+        traits.append('acoustic')
+    if row.get('energy', 0) > 0.65:
+        traits.append('high-energy')
+    if row.get('energy', 1) < 0.35:
+        traits.append('low-energy')
+    if row.get('danceability', 0) > 0.7:
+        traits.append('danceable')
+    if row.get('instrumentalness', 0) > 0.3:
+        traits.append('instrumental')
+    if row.get('valence', 0) > 0.7:
+        traits.append('upbeat')
+    if row.get('valence', 1) < 0.3:
+        traits.append('melancholic')
+    if row.get('tempo', 0) > 130:
+        traits.append('fast-tempo')
+    if row.get('liveness', 0) > 0.4:
+        traits.append('live-feel')
+    return ' + '.join(traits[:2]) if traits else 'balanced'
+
+
 def interpret_clusters(cluster_profiles):
     """
-    Generate human-readable labels for each cluster based on dominant
-    audio features.
+    Generate human-readable labels for each cluster using the new
+    threshold-based naming system (Fix 5).
 
     Parameters
     ----------
@@ -206,47 +248,7 @@ def interpret_clusters(cluster_profiles):
 
     for cluster_id in cluster_profiles.index:
         row = cluster_profiles.loc[cluster_id]
-        traits = []
-
-        # Identify dominant characteristics
-        if row.get("danceability", 0) > 0.7:
-            traits.append("high danceability")
-        elif row.get("danceability", 1) < 0.4:
-            traits.append("low danceability")
-
-        if row.get("energy", 0) > 0.7:
-            traits.append("high energy")
-        elif row.get("energy", 1) < 0.35:
-            traits.append("low energy")
-
-        if row.get("acousticness", 0) > 0.7:
-            traits.append("acoustic")
-
-        if row.get("instrumentalness", 0) > 0.5:
-            traits.append("instrumental")
-
-        if row.get("valence", 0) > 0.7:
-            traits.append("upbeat/happy")
-        elif row.get("valence", 1) < 0.3:
-            traits.append("dark/melancholic")
-
-        if row.get("speechiness", 0) > 0.3:
-            traits.append("speech-heavy")
-
-        if row.get("tempo", 0) > 140:
-            traits.append("fast tempo")
-        elif row.get("tempo", 200) < 90:
-            traits.append("slow tempo")
-
-        if row.get("liveness", 0) > 0.5:
-            traits.append("live performance")
-
-        # Build label
-        if traits:
-            label = " + ".join(traits[:3])  # Top 3 traits
-        else:
-            label = "balanced mix"
-
+        label = name_cluster(row)
         interpretations[cluster_id] = label
         print(f"  Cluster {cluster_id}: {label}")
 

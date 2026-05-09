@@ -26,6 +26,12 @@ PLOTS_DIR = os.path.join(OUTPUTS_DIR, "plots")
 # Dataset file paths
 RAW_DATASET_PATH = os.path.join(RAW_DATA_DIR, "single_genre_artists.csv")
 CLUSTERED_OUTPUT_PATH = os.path.join(PROCESSED_DATA_DIR, "clustered_songs.csv")
+CLUSTERED_OUTPUT_V2_PATH = os.path.join(PROCESSED_DATA_DIR, "clustered_songs_v2.csv")
+
+# Cached results paths (renamed from cloud_* for clarity)
+RESULTS_PATH = os.path.join(PROCESSED_DATA_DIR, "results.npz")
+METRICS_PATH = os.path.join(PROCESSED_DATA_DIR, "metrics.json")
+SUMMARY_REPORT_PATH = os.path.join(OUTPUTS_DIR, "cluster_summary_report.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +60,7 @@ REFERENCE_COLUMNS = [
     "name_artists",
     "genres",
     "release_date",
+    "popularity_songs",
 ]
 
 # Columns to drop entirely (not useful for clustering or metadata display)
@@ -62,10 +69,33 @@ DROP_COLUMNS = [
     "key",
     "mode",
     "time_signature",
-    "popularity_songs",
     "popularity_artists",
     "followers",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Genre family mapping — collapses 3,153 raw genres into ~15 families
+# ---------------------------------------------------------------------------
+GENRE_MAP = {
+    'jazz': 'Jazz', 'blues': 'Blues', 'pop': 'Pop',
+    'rock': 'Rock', 'classical': 'Classical', 'opera': 'Classical',
+    'hip hop': 'Hip-Hop', 'rap': 'Hip-Hop', 'r&b': 'R&B', 'soul': 'R&B',
+    'electronic': 'Electronic', 'dance': 'Electronic', 'edm': 'Electronic',
+    'country': 'Country', 'folk': 'Folk', 'indie': 'Indie',
+    'hoerspiel': 'Spoken Word', 'podcast': 'Spoken Word',
+    'metal': 'Metal', 'punk': 'Punk', 'latin': 'Latin',
+    'reggae': 'Reggae', 'world': 'World Music',
+}
+
+
+def map_genre(raw):
+    """Map a raw genre string to one of ~15 genre families via keyword matching."""
+    raw = str(raw).lower()
+    for key, family in GENRE_MAP.items():
+        if key in raw:
+            return family
+    return 'Other'
 
 
 # ---------------------------------------------------------------------------
