@@ -1,6 +1,13 @@
 # Amazon Music Clustering
 
-Unsupervised machine-learning pipeline that groups **95,837 songs** from the Amazon Music catalogue into meaningful clusters based on 10 audio features — without any genre labels.
+An end-to-end **unsupervised machine learning project** that clusters **95,837 Amazon Music tracks** into meaningful groups using audio features — completely without genre labels.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/ML-Unsupervised-orange?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Framework-Streamlit-red?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />
+</p>
 
 ---
 
@@ -162,7 +169,6 @@ Interactive web app with 6 pages:
 ### Installation
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/10UNknownboy/Amazon-Music-Clustering.git
 cd Amazon-Music-Clustering
 pip install -r requirements.txt
@@ -188,7 +194,7 @@ streamlit run app.py
 
 ---
 
-## 📊 Dataset
+## Dataset
 
 | Property         | Details                                |
 | ---------------- | -------------------------------------- |
@@ -218,7 +224,7 @@ streamlit run app.py
 
 ---
 
-## 🔬 Approach
+## Approach
 
 ### Phase 1 — Data Exploration & Preprocessing
 - Load dataset, inspect shape, dtypes, missing values, and duplicates
@@ -262,7 +268,7 @@ streamlit run app.py
 
 ---
 
-## 📈 Evaluation Metrics
+## Evaluation Metrics
 
 | Metric                     | Description                                                              |
 | -------------------------- | ------------------------------------------------------------------------ |
@@ -274,7 +280,7 @@ streamlit run app.py
 
 ---
 
-## 🎨 Key Visualizations
+## Visualizations
 
 - **Elbow Curve** — SSE vs. number of clusters (k)
 - **Silhouette Plot** — Per-sample silhouette widths
@@ -287,7 +293,7 @@ streamlit run app.py
 
 ---
 
-## 📦 Project Deliverables
+## Project Deliverables
 
 | Deliverable                 | Description                                              |
 | --------------------------- | -------------------------------------------------------- |
@@ -299,18 +305,18 @@ streamlit run app.py
 
 ---
 
-## 📝 Project Guidelines
+## Project Guidelines
 
-- ✅ Use clean, modular code with well-defined functions
-- ✅ Follow **PEP-8** style conventions
-- ✅ Track changes using **Git / GitHub**
-- ✅ Comment code blocks and explain each step clearly
-- ✅ Save visual outputs (plots) and insights in the report
-- ✅ Use a virtual environment (`env/`) for dependency isolation
+- Use clean, modular code with well-defined functions
+- Follow **PEP-8** style conventions
+- Track changes using **Git / GitHub**
+- Comment code blocks and explain each step clearly
+- Save visual outputs (plots) and insights in the report
+- Use a virtual environment (`env/`) for dependency isolation
 
 ---
 
-## 🏷️ Technical Tags
+## Technical Tags
 
 `Python` · `Pandas` · `NumPy` · `scikit-learn` · `KMeans` · `DBSCAN` · `Hierarchical Clustering` · `EDA` · `PCA` · `t-SNE` · `Unsupervised Learning` · `Recommendation` · `Streamlit`
 
