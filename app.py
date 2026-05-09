@@ -153,7 +153,7 @@ def render_sidebar():
         st.markdown(
             "<div style='color:#606070; font-size:12px; "
             "text-align:center;'>"
-            "Amazon Music Clustering<br>Unsupervised ML</div>",
+            "Amazon Music Clustering<br>Unsupervised ML<br>Made by: Manglesh Kumar Singh</div>",
             unsafe_allow_html=True,
         )
     return page
