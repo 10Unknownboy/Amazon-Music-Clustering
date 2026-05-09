@@ -171,6 +171,17 @@ Interactive web app with 6 pages:
 ```bash
 git clone https://github.com/10UNknownboy/Amazon-Music-Clustering.git
 cd Amazon-Music-Clustering
+
+# Create a virtual environment (recommended)
+python -m venv env
+
+# Activate the virtual environment
+# On Windows:
+env\Scripts\activate
+# On macOS/Linux:
+source env/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
