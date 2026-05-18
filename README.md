@@ -316,17 +316,6 @@ streamlit run app.py
 
 ---
 
-## Project Guidelines
-
-- Use clean, modular code with well-defined functions
-- Follow **PEP-8** style conventions
-- Track changes using **Git / GitHub**
-- Comment code blocks and explain each step clearly
-- Save visual outputs (plots) and insights in the report
-- Use a virtual environment (`env/`) for dependency isolation
-
----
-
 ## Technical Tags
 
 `Python` · `Pandas` · `NumPy` · `scikit-learn` · `KMeans` · `DBSCAN` · `Hierarchical Clustering` · `EDA` · `PCA` · `t-SNE` · `Unsupervised Learning` · `Recommendation` · `Streamlit`
